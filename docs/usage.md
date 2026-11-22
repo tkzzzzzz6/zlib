@@ -38,14 +38,16 @@ again to discover files added by other programs, refresh metadata and mark
 missing files. A directory-confined MCP server only writes inside its allowed
 directory; scan its download folder from the CLI to update your bookshelf.
 
-`preview` shows a local PDF page or an EPUB chapter. In the terminal use
-the arrow keys to navigate, or pass `--page N` to print the text of page or
-chapter N. Piped output defaults to the first page or chapter. EPUB text
-works with the standalone binary. For PDF previews, install [Poppler](https://poppler.freedesktop.org/)
+`preview` shows a local PDF page or an EPUB chapter. Roll the wheel down
+to read the next page or chapter and up to go back. Left/right do the same.
+Pass `--page N` to print the text of page or chapter N. Piped output
+defaults to the first page or chapter. EPUB text works with the standalone
+binary. For PDF previews, install [Poppler](https://poppler.freedesktop.org/)
 and make `pdfinfo` and `pdftotext` available on PATH. Add `pdftoppm` for
-page images in terminals with Kitty graphics or Sixel. Roll the wheel or use
-`+` and `-` to zoom a PDF image. Press `0` to fit it again. For scanned pages
-without selectable text, use image mode or press `o` to open a desktop reader.
+page images in terminals with Kitty graphics or Sixel. Hold Ctrl and roll
+the wheel to zoom a PDF image, or press `+` and `-`. Press `0` to fit it
+again. For scanned pages without selectable text, use image mode or press
+`o` to open a desktop reader.
 
 ## Search
 

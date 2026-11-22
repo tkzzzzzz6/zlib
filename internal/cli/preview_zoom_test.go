@@ -10,7 +10,7 @@ import (
 	"github.com/heartleo/zlib/internal/preview"
 )
 
-func TestPreviewWheelZoomAndFit(t *testing.T) {
+func TestPreviewCtrlWheelZoomAndFit(t *testing.T) {
 	p := newPreviewPage("pages.pdf")
 	defer p.cancel()
 	p.busy, p.graphics = false, true
@@ -33,8 +33,8 @@ func TestPreviewWheelZoomAndFit(t *testing.T) {
 			t.Fatalf("zoom should show %s: %s", label, got)
 		}
 	}
-	wheelUp := tea.MouseWheelMsg{Button: tea.MouseWheelUp}
-	wheelDown := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
+	wheelUp := tea.MouseWheelMsg{Button: tea.MouseWheelUp, Mod: tea.ModCtrl}
+	wheelDown := tea.MouseWheelMsg{Button: tea.MouseWheelDown, Mod: tea.ModCtrl}
 	step(wheelUp)
 	wantZoom("125%")
 	step(wheelDown)
@@ -54,8 +54,8 @@ func TestPreviewWheelZoomAndFit(t *testing.T) {
 	step(key("0"))
 	wantZoom("100%")
 	step(key("x"))
-	if view := p.View(); view.MouseMode != tea.MouseModeNone || !strings.Contains(view.Content, "First line") {
-		t.Fatal("text mode must release the mouse and show the extracted text")
+	if view := p.View(); view.MouseMode != tea.MouseModeCellMotion || !strings.Contains(view.Content, "First line") {
+		t.Fatal("text mode must receive page turns and show the extracted text")
 	}
 	step(wheelUp)
 	step(key("x"))
@@ -106,30 +106,94 @@ func TestEnlargedPreviewPansAndTurnsPages(t *testing.T) {
 	}
 }
 
-func TestPreviewWheelCaptureOnlyForPDFImages(t *testing.T) {
-	for _, mode := range []string{"epub", "text", "unsupported terminal", "small window", "loading"} {
+func TestPreviewWheelTurnsPagesAndChapters(t *testing.T) {
+	for _, mode := range []string{"pdf image", "epub", "pdf text"} {
 		t.Run(mode, func(t *testing.T) {
 			p := newPreviewPage("sample.pdf")
 			defer p.cancel()
 			p.graphics, p.busy = true, false
-			p.page = preview.Page{Count: 1, Image: image.NewGray(image.Rect(0, 0, 40, 80))}
+			p.page = preview.Page{Count: 3, Image: image.NewGray(image.Rect(0, 0, 40, 80))}
+			var cmd tea.Cmd
 			switch mode {
 			case "epub":
-				p.path, p.page.Image, p.page.Chapters = "sample.epub", nil, []string{"Chapter"}
-			case "text":
-				p.textOnly = true
-			case "unsupported terminal":
-				p.graphics = false
-			case "small window":
-				p.height = 5
-			case "loading":
-				p.busy = true
+				p.path, p.page.Image, p.page.Chapters = "sample.epub", nil, []string{"A", "B", "C"}
+			case "pdf text":
+				p.graphics, p.page.Image = false, nil
 			}
-			next, _ := p.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-			p = next.(previewPageModel)
-			if p.View().MouseMode != tea.MouseModeNone || p.zoomPercent != 100 {
-				t.Fatal("captured wheel outside graphical PDF preview")
+			if p.View().MouseMode == tea.MouseModeNone {
+				t.Fatal("preview did not request wheel events")
 			}
+			wheel := func(button tea.MouseButton, mod tea.KeyMod) {
+				next, c := p.Update(tea.MouseWheelMsg{Button: button, Mod: mod})
+				p, cmd = next.(previewPageModel), c
+			}
+			wheel(tea.MouseWheelUp, 0)
+			if cmd != nil || p.index != 0 || p.zoomPercent != 100 {
+				t.Fatal("wheel crossed the first page or changed zoom")
+			}
+			wheel(tea.MouseWheelDown, tea.ModShift)
+			if cmd != nil || p.index != 0 {
+				t.Fatal("unexpected modifier turned page")
+			}
+			wheel(tea.MouseWheelDown, 0)
+			if cmd == nil || p.index != 1 || !p.busy || p.zoomPercent != 100 {
+				t.Fatal("wheel down did not request the next page at the same zoom")
+			}
+			wheel(tea.MouseWheelDown, 0)
+			if cmd == nil || p.index != 2 || p.View().MouseMode == tea.MouseModeNone {
+				t.Fatal("consecutive wheel events must navigate from the latest requested page")
+			}
+			wheel(tea.MouseWheelDown, 0)
+			if cmd != nil || p.index != 2 {
+				t.Fatal("wheel crossed the last page")
+			}
+			wheel(tea.MouseWheelUp, 0)
+			if cmd == nil || p.index != 1 {
+				t.Fatal("wheel up did not request the previous page")
+			}
+			p.cancel()
 		})
+	}
+}
+
+func TestPreviewWheelNavigatesOpenChapterList(t *testing.T) {
+	p := newPreviewPage("sample.epub")
+	defer p.cancel()
+	p.page = preview.Page{Count: 3, Chapters: []string{"A", "B", "C"}}
+	p.busy, p.contents = false, true
+	if p.View().MouseMode == tea.MouseModeNone {
+		t.Fatal("chapter list did not request wheel events")
+	}
+	next, cmd := p.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	p = next.(previewPageModel)
+	if cmd != nil || p.chapter != 1 || !p.contents || p.index != 0 {
+		t.Fatal("wheel in the chapter list should move the selection only")
+	}
+}
+
+func TestShellPreviewForwardsWheelAndModifiers(t *testing.T) {
+	p := newPreviewPage("sample.pdf")
+	defer p.cancel()
+	p.graphics, p.busy = true, false
+	p.page = preview.Page{Count: 2, Image: image.NewGray(image.Rect(0, 0, 40, 80))}
+	m := shellModel{kind: "preview", page: p, width: 80, height: 24}
+	view := m.View()
+	if view.MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("shell did not request wheel events")
+	}
+	for _, hint := range []string{"wheel/←/→ turn", "Ctrl+wheel/+/- zoom", "esc back"} {
+		if !strings.Contains(ansi.Strip(view.Content), hint) {
+			t.Fatalf("80-column preview omitted %q", hint)
+		}
+	}
+	m, cmd := shellStep(m, tea.MouseWheelMsg{Button: tea.MouseWheelUp, Mod: tea.ModCtrl})
+	if cmd != nil || m.page.(previewPageModel).zoomPercent != 125 {
+		t.Fatal("shell did not forward Ctrl+wheel to the current image")
+	}
+	m, cmd = shellStep(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	p = m.page.(previewPageModel)
+	defer p.cancel()
+	if cmd == nil || p.index != 1 || p.zoomPercent != 125 {
+		t.Fatal("shell did not forward the plain wheel as a page turn")
 	}
 }

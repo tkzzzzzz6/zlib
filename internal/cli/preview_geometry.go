@@ -1,6 +1,9 @@
 package cli
 
-import "image"
+import (
+	"image"
+	"image/color"
+)
 
 const (
 	minPageZoom = 50
@@ -10,17 +13,18 @@ const (
 // pageViewport crops the source before scaling so a zoomed page only needs
 // a bitmap as large as the visible viewport. Covers always use their full image.
 func (s coverSource) pageViewport(fitW, fitH, maxW, maxH int) (image.Image, int, int) {
-	if s.zoomPercent == 0 || s.zoomPercent == 100 {
-		return s.img, fitW, fitH
+	zoom := s.zoomPercent
+	if zoom == 0 {
+		zoom = 100
 	}
-	zoom := min(max(s.zoomPercent, minPageZoom), maxPageZoom)
+	zoom = min(max(zoom, minPageZoom), maxPageZoom)
 	b := s.img.Bounds()
 	x, width, outW := pageAxis(b.Dx(), fitW, maxW, zoom, s.panX)
 	y, height, outH := pageAxis(b.Dy(), fitH, maxH, zoom, s.panY)
-	if width == b.Dx() && height == b.Dy() {
+	crop := image.Rect(x, y, x+width, y+height).Add(b.Min)
+	if crop == b && b.Min == (image.Point{}) {
 		return s.img, outW, outH
 	}
-	crop := image.Rect(x, y, x+width, y+height).Add(b.Min)
 	return pageRegion{Image: s.img, rect: crop}, outW, outH
 }
 
@@ -43,4 +47,9 @@ type pageRegion struct {
 	rect image.Rectangle
 }
 
-func (p pageRegion) Bounds() image.Rectangle { return p.rect }
+// The Sixel encoder samples from (0,0), including when no resize is needed.
+func (p pageRegion) Bounds() image.Rectangle { return p.rect.Sub(p.rect.Min) }
+
+func (p pageRegion) At(x, y int) color.Color {
+	return p.Image.At(p.rect.Min.X+x, p.rect.Min.Y+y)
+}

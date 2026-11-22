@@ -18,12 +18,12 @@ func TestPDFFrameCacheChangesWithViewport(t *testing.T) {
 	p.graphics, p.busy = true, false
 	p.page.Image = image.NewGray(image.Rect(0, 0, 20, 40))
 	renderer := coverGraphicsModel{inner: p, caps: coverCapabilities{kitty: true, cellWidth: 8, cellHeight: 16}}
-	seen := make(map[string]bool)
+	seen := make(map[coverRenderKey]bool)
 	for _, state := range []struct{ zoom, x, y int }{{100, 0, 0}, {400, 0, 0}, {400, 100, 0}, {400, 100, 100}} {
 		p.zoomPercent, p.panX, p.panY = state.zoom, state.x, state.y
 		renderer.inner = p
 		key := renderer.sourceKey()
-		if key == "" || seen[key] {
+		if key.layout == "" || seen[key] {
 			t.Fatalf("viewport %+v failed to invalidate the graphics frame", state)
 		}
 		seen[key] = true
@@ -75,6 +75,38 @@ func TestPDFFrameZoomAndPan(t *testing.T) {
 						t.Fatalf("pan (%d,%d) selected the wrong quadrant", x, y)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestPDFSixelNativeScale(t *testing.T) {
+	// At native scale the encoder reads the viewport directly, without
+	// passing through resizeCover's zero-origin bitmap.
+	for _, tc := range []struct {
+		name         string
+		origin       image.Point
+		height, zoom int
+	}{
+		{"bottom half", image.Point{}, 16, 200},
+		{"whole page with offset origin", image.Pt(12, 16), 32, 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			page := image.NewGray(image.Rect(0, 0, 16, 32).Add(tc.origin))
+			for y := 16; y < 32; y++ {
+				for x := 0; x < 16; x++ {
+					page.SetGray(tc.origin.X+x, tc.origin.Y+y, color.Gray{Y: 255})
+				}
+			}
+			src := coverSource{img: page, area: image.Rect(0, 0, 16, tc.height), documentPage: true, zoomPercent: tc.zoom, panY: 100}
+			frame := encodeCoverFrame(src, coverCapabilities{sixel: true, cellWidth: 1, cellHeight: 1})
+			if frame == nil {
+				t.Fatal("expected a Sixel frame")
+			}
+			decoded := decodePDFTestFrame(t, frame)
+			red, _, _, alpha := decoded.At(8, tc.height-1).RGBA()
+			if red != 0xffff || alpha != 0xffff {
+				t.Fatalf("expected an opaque white pixel at the bottom of the viewport, got red=%d alpha=%d", red, alpha)
 			}
 		})
 	}

@@ -71,7 +71,7 @@ func TestPreviewPDFGraphicFits80ColumnsAndTogglesText(t *testing.T) {
 	p.page = preview.Page{Image: image.NewGray(image.Rect(0, 0, 30, 40)), Text: "PDF text", Count: 2}
 	p.wrap()
 	outer := coverGraphicsModel{inner: shellModel{page: p, kind: "preview"}, caps: coverCapabilities{kitty: true, cellWidth: 8, cellHeight: 16}}
-	if outer.sourceKey() == "" || outer.source().bounds() != image.Rect(1, 3, 79, 21) {
+	if outer.sourceKey().layout == "" || outer.source().bounds() != image.Rect(1, 3, 79, 21) {
 		t.Fatal("PDF did not reserve the 80x24 preview body")
 	}
 	next, _ := p.Update(key("x"))

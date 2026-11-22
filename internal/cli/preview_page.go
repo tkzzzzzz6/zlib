@@ -102,18 +102,48 @@ func (m previewPageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case libraryOpenedMsg:
 		m.notice = v.message()
 	case tea.MouseWheelMsg:
-		if m.showingImage() {
-			switch v.Button {
-			case tea.MouseWheelUp:
-				m.setZoom(m.zoomPercent + 25)
-			case tea.MouseWheelDown:
-				m.setZoom(m.zoomPercent - 25)
-			}
-		}
+		return m.wheel(v)
 	case tea.KeyPressMsg:
 		return m.key(v.String())
 	}
 	return m, nil
+}
+
+func (m previewPageModel) wheel(event tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	if m.page.Count == 0 || m.height < 7 {
+		return m, nil
+	}
+	var step int
+	switch event.Button {
+	case tea.MouseWheelUp:
+		step = -1
+	case tea.MouseWheelDown:
+		step = 1
+	default:
+		return m, nil
+	}
+	switch event.Mod {
+	case 0:
+		if m.contents {
+			m.chapter = max(0, min(len(m.page.Chapters)-1, m.chapter+step))
+			m.chapterTop = visibleListOffset(m.chapterTop, m.chapter, len(m.page.Chapters), m.visibleRows())
+			return m, nil
+		}
+		return m.turn(step)
+	case tea.ModCtrl:
+		if m.showingImage() {
+			m.setZoom(m.zoomPercent - 25*step)
+		}
+	}
+	return m, nil
+}
+
+func (m previewPageModel) turn(step int) (tea.Model, tea.Cmd) {
+	index := m.index + step
+	if index < 0 || index >= m.page.Count {
+		return m, nil
+	}
+	return m.load(index)
 }
 
 func (m previewPageModel) key(k string) (tea.Model, tea.Cmd) {
@@ -139,13 +169,9 @@ func (m previewPageModel) key(k string) (tea.Model, tea.Cmd) {
 	case "o":
 		return m, libraryOpenCmd(m.path)
 	case "right", "l":
-		if m.index+1 < m.page.Count {
-			return m.load(m.index + 1)
-		}
+		return m.turn(1)
 	case "left", "h":
-		if m.index > 0 {
-			return m.load(m.index - 1)
-		}
+		return m.turn(-1)
 	case "c":
 		if !m.busy && len(m.page.Chapters) > 0 {
 			m.contents, m.chapter = true, m.index
@@ -227,7 +253,7 @@ func (m previewPageModel) View() tea.View {
 		for i := m.chapterTop; i < min(len(m.page.Chapters), m.chapterTop+m.visibleRows()); i++ {
 			rows = append(rows, selectionRow(fmt.Sprintf("%d. %s", i+1, safeText(m.page.Chapters[i])), i == m.chapter, m.width))
 		}
-		return screenView(m.width, m.height, "Chapters", subtitle, strings.Join(rows, "\n"), "", uiKey("↑/↓", "select"), uiKey("enter", "read"), uiKey("esc", "back"))
+		return m.previewView("Chapters", subtitle, strings.Join(rows, "\n"), "", uiKey("wheel/↑/↓", "select"), uiKey("enter", "read"), uiKey("esc", "back"))
 	}
 	if m.busy {
 		body = "Loading preview…"
@@ -250,10 +276,10 @@ func (m previewPageModel) View() tea.View {
 		body = ansi.Hardwrap(status, max(1, m.width), true)
 		status = ""
 	}
-	hints := []keys.Binding{uiKey("←/→", "turn"), uiKey("↑/↓", "scroll")}
+	hints := []keys.Binding{uiKey("wheel/←/→", "turn"), uiKey("↑/↓", "scroll")}
 	if m.showingImage() {
 		title += fmt.Sprintf(" · %d%%", m.zoomPercent)
-		hints = []keys.Binding{uiKey("wheel/+/-", "zoom"), uiKey("0", "fit"), uiKey("←/→", "turn")}
+		hints = []keys.Binding{uiKey("wheel/←/→", "turn"), uiKey("Ctrl+wheel/+/-", "zoom"), uiKey("0", "fit")}
 		if m.zoomPercent > 100 && status == "" {
 			status = "↑/↓ pan vertically · shift+←/→ pan horizontally"
 		}
@@ -265,8 +291,12 @@ func (m previewPageModel) View() tea.View {
 		hints = append(hints, uiKey("x", "text/image"))
 	}
 	hints = append(hints, uiKey("o", "open"), uiKey("esc", "back"))
+	return m.previewView(title, subtitle, body, status, hints...)
+}
+
+func (m previewPageModel) previewView(title, subtitle, body, status string, hints ...keys.Binding) tea.View {
 	view := screenView(m.width, m.height, title, subtitle, body, status, hints...)
-	if m.showingImage() {
+	if m.page.Count > 0 && m.height >= 7 {
 		view.MouseMode = tea.MouseModeCellMotion
 	}
 	return view

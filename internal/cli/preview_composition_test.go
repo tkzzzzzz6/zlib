@@ -10,6 +10,48 @@ import (
 	"github.com/heartleo/zlib/internal/preview"
 )
 
+func TestPDFZoomKeepsLastFrameUntilLatestViewportIsReady(t *testing.T) {
+	page := newPreviewPage("sample.pdf")
+	defer page.cancel()
+	page.graphics, page.busy = true, false
+	page.page = preview.Page{Count: 2, Image: image.NewGray(image.Rect(0, 0, 20, 50))}
+	m := coverGraphicsModel{inner: page, output: &coverOutput{}, caps: coverCapabilities{kitty: true, cellWidth: 8, cellHeight: 16}, supported: true}
+	m.Update(nil)
+	initial := encodeCoverFrame(m.source(), m.caps)
+	m.Update(coverEncodedMsg{m.generation, initial})
+	visible := func() *coverFrame {
+		t.Helper()
+		m.View()
+		return m.output.want
+	}
+	if initial == nil || visible() != initial {
+		t.Fatal("fitted page did not appear")
+	}
+	key := func(code rune) { m.Update(tea.KeyPressMsg{Code: code, Text: string(code)}) }
+	key('+')
+	firstZoom := m.generation
+	if visible() != initial || !m.encoding {
+		t.Fatal("zoom removed the fitted frame before the replacement was ready")
+	}
+	key('+')
+	m.Update(coverEncodedMsg{firstZoom, &coverFrame{}})
+	if visible() != initial || !m.encoding {
+		t.Fatal("obsolete zoom result displaced the fitted frame or stopped the latest encode")
+	}
+	latest := encodeCoverFrame(m.source(), m.caps)
+	m.Update(coverEncodedMsg{m.generation, latest})
+	if latest == nil || visible() != latest || m.encoding {
+		t.Fatal("latest zoom did not replace the fitted frame")
+	}
+	key('-')
+	lastZoom := m.generation
+	key('x')
+	m.Update(coverEncodedMsg{lastZoom, initial})
+	if visible() != nil {
+		t.Fatal("in-flight image survived the switch to text")
+	}
+}
+
 func TestPDFImageClearsTextAtBothMargins(t *testing.T) {
 	const width, height = 80, 24
 	page := newPreviewPage("sample.pdf")
@@ -40,7 +82,7 @@ func TestPDFImageClearsTextAtBothMargins(t *testing.T) {
 		t.Fatal("page failed to encode")
 	}
 	checkMargins("image displayed")
-	m.frame, m.failedGeneration = nil, m.generation
+	m.frame, m.encodedGeneration = nil, m.generation
 	if got := render()[3]; got != line {
 		t.Fatalf("encoding failure lost the text fallback: %q", got)
 	}
