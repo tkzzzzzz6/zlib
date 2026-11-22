@@ -84,3 +84,44 @@ func TestPreviewPDFGraphicFits80ColumnsAndTogglesText(t *testing.T) {
 		t.Fatal("capability loss ignored")
 	}
 }
+
+func TestPDFWheelBurstSkipsSupersededLoads(t *testing.T) {
+	m := newPreviewPage("missing.pdf")
+	m.page, m.busy = preview.Page{Count: 8}, false
+	defer m.cancel()
+	var cmds []tea.Cmd
+	for range 5 {
+		next, cmd := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		m, cmds = next.(previewPageModel), append(cmds, cmd)
+	}
+	defer m.cancel()
+	// Only the first turn and settled target can reach a loader. In-flight
+	// turns that were replaced before the settling window must emit nothing.
+	for _, cmd := range cmds[1 : len(cmds)-1] {
+		if msg := cmd(); msg != nil {
+			t.Fatalf("superseded wheel turn emitted %T", msg)
+		}
+	}
+	last := cmds[len(cmds)-1]().(previewLoadedMsg)
+	if m.index != 5 || last.generation != m.generation || last.err == nil {
+		t.Fatal("the settled wheel target was not loaded")
+	}
+}
+
+func TestPreviewGraphicsProbeLetsActiveTextLoadFinish(t *testing.T) {
+	p := newPreviewPage("sample.pdf")
+	defer p.cancel()
+	p.graphics, p.busy = false, true
+	initial := p.ctx
+	next, cmd := p.Update(previewGraphicsMsg(true))
+	p = next.(previewPageModel)
+	if cmd != nil || !p.upgradeImage || initial.Err() != nil {
+		t.Fatal("capability probe restarted active extraction")
+	}
+	next, cmd = p.Update(previewLoadedMsg{page: preview.Page{Count: 4, Text: "extracted"}})
+	p = next.(previewPageModel)
+	defer p.cancel()
+	if cmd == nil || !p.graphics || p.upgradeImage || p.page.Text != "extracted" || !p.busy {
+		t.Fatal("finished extraction did not upgrade to graphics")
+	}
+}

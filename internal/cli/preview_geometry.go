@@ -3,6 +3,8 @@ package cli
 import (
 	"image"
 	"image/color"
+
+	"golang.org/x/image/draw"
 )
 
 const (
@@ -22,10 +24,17 @@ func (s coverSource) pageViewport(fitW, fitH, maxW, maxH int) (image.Image, int,
 	x, width, outW := pageAxis(b.Dx(), fitW, maxW, zoom, s.panX)
 	y, height, outH := pageAxis(b.Dy(), fitH, maxH, zoom, s.panY)
 	crop := image.Rect(x, y, x+width, y+height).Add(b.Min)
-	if crop == b && b.Min == (image.Point{}) {
-		return s.img, outW, outH
+	if outW == width && outH == height {
+		if crop == b && b.Min == (image.Point{}) {
+			return s.img, outW, outH
+		}
+		return pageRegion{Image: s.img, rect: crop}, outW, outH
 	}
-	return pageRegion{Image: s.img, rect: crop}, outW, outH
+	dst := image.NewRGBA(image.Rect(0, 0, outW, outH))
+	// Sampling the original image and source rectangle lets the scaler use
+	// its concrete pixel buffers, including on a cropped or offset page.
+	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), s.img, crop, draw.Src, nil)
+	return dst, outW, outH
 }
 
 // pageAxis maps the visible output pixels to a span of the source image.
@@ -47,9 +56,35 @@ type pageRegion struct {
 	rect image.Rectangle
 }
 
-// The Sixel encoder samples from (0,0), including when no resize is needed.
+// The Sixel encoder samples native-scale pages from (0,0).
 func (p pageRegion) Bounds() image.Rectangle { return p.rect.Sub(p.rect.Min) }
 
 func (p pageRegion) At(x, y int) color.Color {
 	return p.Image.At(p.rect.Min.X+x, p.rect.Min.Y+y)
+}
+
+// Poppler returns RGB even for text-only pages. A single grayscale channel
+// represents an opaque, achromatic viewport exactly and reduces encoder work.
+func compactGrayPage(img image.Image) image.Image {
+	rgba, ok := img.(*image.RGBA)
+	if !ok {
+		return img
+	}
+	b := rgba.Bounds()
+	for y := range b.Dy() {
+		row := rgba.Pix[y*rgba.Stride : y*rgba.Stride+b.Dx()*4]
+		for x := 0; x < len(row); x += 4 {
+			if row[x] != row[x+1] || row[x] != row[x+2] || row[x+3] != 255 {
+				return img
+			}
+		}
+	}
+	gray := image.NewGray(b)
+	for y := range b.Dy() {
+		row := rgba.Pix[y*rgba.Stride : y*rgba.Stride+b.Dx()*4]
+		for x := range b.Dx() {
+			gray.Pix[y*gray.Stride+x] = row[x*4]
+		}
+	}
+	return gray
 }

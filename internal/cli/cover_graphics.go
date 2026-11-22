@@ -139,6 +139,30 @@ type coverRenderKey struct {
 	zoomPercent, panX, panY int    // viewport within the same PDF page
 }
 
+// Keep a few completed views of the current PDF page for wheel reversals and
+// fit resets. The four slots together retain at most 8 MiB of encoded data.
+type pageViewportCache [4]struct {
+	key   coverRenderKey
+	frame *coverFrame
+}
+
+func (c *pageViewportCache) remember(key coverRenderKey, frame *coverFrame) {
+	if frame == nil || frame.pageKey == "" || len(frame.data) > 2<<20 {
+		return
+	}
+	copy(c[1:], c[:len(c)-1])
+	c[0].key, c[0].frame = key, frame
+}
+
+func (c *pageViewportCache) lookup(key coverRenderKey) *coverFrame {
+	for _, entry := range c {
+		if entry.key == key {
+			return entry.frame
+		}
+	}
+	return nil
+}
+
 // The outer model owns terminal capabilities across shell page generations.
 // Network requests and keyboard navigation remain in the existing shared pages.
 type coverGraphicsModel struct {
@@ -148,6 +172,7 @@ type coverGraphicsModel struct {
 	generation        uint64
 	key               coverRenderKey
 	frame             *coverFrame
+	viewports         pageViewportCache
 	encoding          bool
 	supported         bool
 	encodedGeneration uint64
@@ -273,6 +298,7 @@ func (m *coverGraphicsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if event.generation == m.generation {
 			m.encodedGeneration = event.generation
 			m.frame = event.frame
+			m.viewports.remember(m.key, event.frame)
 			wake = tea.Raw(coverWake)
 		}
 	default:
@@ -301,14 +327,19 @@ func (m *coverGraphicsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	key := m.sourceKey()
 	if key != m.key {
+		m.generation++
 		// During zoom or pan the old pixels still belong to this page. Keep
 		// them on screen while the single encoder catches up with input.
 		if key.layout != m.key.layout {
 			m.frame = nil
+			m.viewports = pageViewportCache{}
+			wake = tea.Raw(coverWake)
+		} else if cached := m.viewports.lookup(key); cached != nil {
+			m.frame = cached
+			m.encodedGeneration = m.generation
 			wake = tea.Raw(coverWake)
 		}
 		m.key = key
-		m.generation++
 	}
 	if key.layout != "" && !m.encoding && m.encodedGeneration != m.generation {
 		m.encoding = true
@@ -424,7 +455,12 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 	}
 	var data bytes.Buffer
 	if f.protocol == "Kitty" {
-		if err := png.Encode(&data, img); err != nil {
+		compression := png.DefaultCompression
+		if s.documentPage {
+			img = compactGrayPage(img)
+			compression = png.BestSpeed
+		}
+		if err := (&png.Encoder{CompressionLevel: compression}).Encode(&data, img); err != nil {
 			return nil
 		}
 		payload := base64.StdEncoding.EncodeToString(data.Bytes())
@@ -443,8 +479,10 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 		}
 		f.data = out.String()
 	} else if f.protocol == "Sixel" {
-		if err := (&sixel.Encoder{}).Encode(&data, img); err != nil {
-			return nil
+		if !s.documentPage || !encodePageSixel(&data, img) {
+			if err := (&sixel.Encoder{}).Encode(&data, img); err != nil {
+				return nil
+			}
 		}
 		f.data = ansi.SixelGraphics(0, 1, 0, data.Bytes())
 	} else {

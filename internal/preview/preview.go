@@ -21,12 +21,42 @@ type Page struct {
 	Chapters     []string
 }
 
-// Load reads only the selected local document. PDF graphics are optional.
+// Load reads one page without retaining state between calls.
 func Load(ctx context.Context, path string, index int, wantImage bool) (Page, error) {
+	return NewDocument(path).Load(ctx, index, wantImage)
+}
+
+// Document retains PDF metadata and recent pages for one open preview. The
+// gate allows a cancelled page turn to finish releasing its processes before
+// the next one starts.
+type Document struct {
+	path string
+	gate chan struct{}
+	run  toolRunner
+	info os.FileInfo
+	pdf  pdfDocument
+}
+
+func NewDocument(path string) *Document {
+	return &Document{path: path, gate: make(chan struct{}, 1), run: runTool}
+}
+
+func sameFile(a, b os.FileInfo) bool {
+	return a != nil && b != nil && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime()) && os.SameFile(a, b)
+}
+
+// Load returns the requested page using the current file at the preview path.
+func (d *Document) Load(ctx context.Context, index int, wantImage bool) (Page, error) {
+	select {
+	case d.gate <- struct{}{}:
+		defer func() { <-d.gate }()
+	case <-ctx.Done():
+		return Page{}, ctx.Err()
+	}
 	if err := ctx.Err(); err != nil {
 		return Page{}, err
 	}
-	path, err := filepath.Abs(path)
+	path, err := filepath.Abs(d.path)
 	if err != nil {
 		return Page{}, err
 	}
@@ -37,6 +67,10 @@ func Load(ctx context.Context, path string, index int, wantImage bool) (Page, er
 	if !info.Mode().IsRegular() {
 		return Page{}, fmt.Errorf("preview requires a regular file")
 	}
+	if sameFile(info, d.info) {
+		return d.loadPDF(ctx, path, index, wantImage)
+	}
+	d.info, d.pdf = nil, pdfDocument{}
 	f, err := os.Open(path)
 	if err != nil {
 		return Page{}, err
@@ -48,7 +82,8 @@ func Load(ctx context.Context, path string, index int, wantImage bool) (Page, er
 	}
 	switch format {
 	case ebookmeta.FormatPDF:
-		return loadPDF(ctx, path, index, wantImage, runTool)
+		d.info = info
+		return d.loadPDF(ctx, path, index, wantImage)
 	case ebookmeta.FormatEPUB:
 		chapters, body, err := ebookmeta.ReadEPUBChapter(ctx, f, info.Size(), index)
 		if err != nil {
@@ -65,6 +100,24 @@ func Load(ctx context.Context, path string, index int, wantImage bool) (Page, er
 	default:
 		return Page{}, fmt.Errorf("preview supports PDF and EPUB; this file is %s", format)
 	}
+}
+
+func (d *Document) loadPDF(ctx context.Context, path string, index int, wantImage bool) (Page, error) {
+	page, err := d.pdf.load(ctx, path, index, wantImage, d.run)
+	if err != nil {
+		return Page{}, err
+	}
+	// Each Poppler process opens the file by name. Discard a mixture of
+	// revisions if the file was replaced while those processes ran.
+	current, err := os.Stat(path)
+	if !sameFile(d.info, current) {
+		d.info, d.pdf = nil, pdfDocument{}
+		if err != nil {
+			return Page{}, err
+		}
+		return Page{}, fmt.Errorf("PDF changed during preview; open the page again")
+	}
+	return page, nil
 }
 
 func terminalText(s string) string {

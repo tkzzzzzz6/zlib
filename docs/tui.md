@@ -210,6 +210,11 @@ vertically and Shift+left/right to pan horizontally. Press `x` to switch
 between the image and text, or Esc to return.
 See [the bookshelf commands and PDF setup](usage.md#local-bookshelf).
 
+The PDF preview keeps the three most recently read pages in memory while
+the book is open. Turning back can reuse the page without running Poppler
+again. Returning to a recent zoom on the same page can also reuse its
+encoded image. Larger terminal windows still take more pixels to transmit.
+
 On Search, Favorites, Recommended, Most popular and History lists, `s` sends
 the selected book to Kindle: it downloads to the default directory, then sends
 with the saved Kindle settings, without a directory picker or send confirmation.

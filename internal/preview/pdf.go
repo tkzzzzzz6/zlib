@@ -6,24 +6,40 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/png"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-const maxPageSide = 1400
+const (
+	maxPageSide = 1400
+	// Each decoded image has at most maxPageSide squared pixels. Retain
+	// only three so a long reading session has a fixed memory ceiling.
+	recentPDFPages = 3
+)
 
 type toolRunner func(ctx context.Context, limit int, name string, args ...string) ([]byte, error)
 
-func loadPDF(ctx context.Context, path string, index int, wantImage bool, run toolRunner) (Page, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
+type pdfDocument struct {
+	count int
+	pages []pdfPage // most recently used first
+}
+
+type pdfPage struct {
+	index  int
+	image  image.Image
+	text   string
+	textOK bool // a scan can have a successful but empty text extraction
+}
+
+func pdfPageCount(ctx context.Context, path string, run toolRunner) (int, error) {
 	info, err := run(ctx, 256<<10, "pdfinfo", "-enc", "UTF-8", path)
 	if err != nil {
-		return Page{}, err
+		return 0, err
 	}
 	count := 0
 	for line := range strings.SplitSeq(string(info), "\n") {
@@ -32,33 +48,73 @@ func loadPDF(ctx context.Context, path string, index int, wantImage bool, run to
 		}
 	}
 	if count < 1 {
-		return Page{}, errors.New("pdfinfo could not determine the page count")
+		return 0, errors.New("pdfinfo could not determine the page count")
 	}
-	if index < 0 || index >= count {
-		return Page{}, fmt.Errorf("choose a page from 1 to %d", count)
+	return count, nil
+}
+
+func (d *pdfDocument) load(ctx context.Context, path string, index int, wantImage bool, run toolRunner) (Page, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if d.count == 0 {
+		count, err := pdfPageCount(ctx, path, run)
+		if err != nil {
+			return Page{}, err
+		}
+		d.count = count
 	}
-	page := Page{Title: terminalText(filepath.Base(path)), Index: index, Count: count}
+	if index < 0 || index >= d.count {
+		return Page{}, fmt.Errorf("choose a page from 1 to %d", d.count)
+	}
+	entry := pdfPage{index: index}
+	pos := slices.IndexFunc(d.pages, func(p pdfPage) bool { return p.index == index })
+	if pos >= 0 {
+		entry = d.pages[pos]
+	}
 	number := strconv.Itoa(index + 1)
-	var imageErr error
-	if wantImage {
+	var imageErr, textErr error
+	var render sync.WaitGroup
+	if wantImage && entry.image == nil {
+		render.Go(func() {
+			var data []byte
+			// Poppler writes a lossless binary PPM by default. The pipe
+			// costs less than PNG compression and decompression per turn.
+			data, imageErr = run(ctx, maxPPMBytes, "pdftoppm", "-f", number, "-l", number, "-singlefile", "-scale-to", strconv.Itoa(maxPageSide), path)
+			if imageErr == nil {
+				entry.image, imageErr = decodePage(data)
+			}
+		})
+	}
+	if !entry.textOK {
 		var data []byte
-		data, imageErr = run(ctx, 10<<20, "pdftoppm", "-f", number, "-l", number, "-singlefile", "-scale-to", strconv.Itoa(maxPageSide), "-png", path)
-		if imageErr == nil {
-			page.Image, imageErr = decodePage(data)
+		data, textErr = run(ctx, 512<<10, "pdftotext", "-f", number, "-l", number, "-layout", "-enc", "UTF-8", path, "-")
+		if textErr == nil {
+			entry.text, entry.textOK = terminalText(string(data)), true
 		}
 	}
-	data, textErr := run(ctx, 512<<10, "pdftotext", "-f", number, "-l", number, "-layout", "-enc", "UTF-8", path, "-")
+	render.Wait()
 	if err := ctx.Err(); err != nil {
 		return Page{}, err
 	}
-	if textErr != nil {
-		if page.Image == nil {
-			return Page{}, errors.Join(imageErr, textErr)
+	page := Page{Title: terminalText(filepath.Base(path)), Index: index, Count: d.count, Text: entry.text}
+	if wantImage {
+		page.Image = entry.image
+	}
+	if !entry.textOK && page.Image == nil {
+		return Page{}, errors.Join(imageErr, textErr)
+	}
+	if pos < 0 {
+		if len(d.pages) < recentPDFPages {
+			d.pages = append(d.pages, pdfPage{})
 		}
+		pos = len(d.pages) - 1
+	}
+	copy(d.pages[1:pos+1], d.pages[:pos])
+	d.pages[0] = entry
+	if textErr != nil {
 		page.Text = textErr.Error()
 		return page, nil
 	}
-	page.Text = terminalText(string(data))
 	if page.Text == "" {
 		page.Text = "This page has no extractable text. Open the PDF in a reader or use a graphics-capable terminal with Poppler's pdftoppm."
 		if imageErr != nil {
@@ -66,17 +122,6 @@ func loadPDF(ctx context.Context, path string, index int, wantImage bool, run to
 		}
 	}
 	return page, nil
-}
-
-func decodePage(data []byte) (image.Image, error) {
-	cfg, err := png.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return nil, fmt.Errorf("invalid PDF page image: %w", err)
-	}
-	if cfg.Width > maxPageSide || cfg.Height > maxPageSide {
-		return nil, errors.New("PDF page image exceeds preview dimensions")
-	}
-	return png.Decode(bytes.NewReader(data))
 }
 
 // toolOutput closes down the child as soon as it exceeds the output budget.

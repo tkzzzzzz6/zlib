@@ -52,6 +52,42 @@ func TestPDFZoomKeepsLastFrameUntilLatestViewportIsReady(t *testing.T) {
 	}
 }
 
+func TestPDFZoomReusesCompletedViewport(t *testing.T) {
+	page := newPreviewPage("sample.pdf")
+	defer page.cancel()
+	page.graphics, page.busy = true, false
+	page.page = preview.Page{Count: 2, Image: image.NewGray(image.Rect(0, 0, 20, 50))}
+	m := coverGraphicsModel{inner: page, caps: coverCapabilities{sixel: true, cellWidth: 8, cellHeight: 16}, supported: true}
+	m.Update(nil)
+	fitted := encodeCoverFrame(m.source(), m.caps)
+	m.Update(coverEncodedMsg{m.generation, fitted})
+	m.Update(key("+"))
+	zoomed := encodeCoverFrame(m.source(), m.caps)
+	m.Update(coverEncodedMsg{m.generation, zoomed})
+	m.Update(key("0"))
+	if m.encoding || m.frame != fitted {
+		t.Fatal("returning to fit must display the already encoded page")
+	}
+	m.Update(key("+"))
+	if m.encoding || m.frame != zoomed {
+		t.Fatal("returning to a recent zoom must reuse its completed frame")
+	}
+	m.Update(key("+"))
+	inFlight := m.generation
+	m.Update(key("0"))
+	m.Update(coverEncodedMsg{inFlight, zoomed})
+	if m.encoding || m.frame != fitted {
+		t.Fatal("obsolete encode displaced the cached fitted page")
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	next := m.inner.(previewPageModel)
+	defer next.cancel()
+	m.Update(previewLoadedMsg{generation: next.generation, page: preview.Page{Index: 1, Count: 2, Image: page.page.Image}})
+	if !m.encoding || m.frame != nil {
+		t.Fatal("a new page must not reuse the previous page's fitted frame")
+	}
+}
+
 func TestPDFImageClearsTextAtBothMargins(t *testing.T) {
 	const width, height = 80, 24
 	page := newPreviewPage("sample.pdf")

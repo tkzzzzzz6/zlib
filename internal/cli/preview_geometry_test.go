@@ -80,6 +80,34 @@ func TestPDFFrameZoomAndPan(t *testing.T) {
 	}
 }
 
+func TestPDFBilinearViewportMatchesReference(t *testing.T) {
+	src := image.NewRGBA(image.Rect(9, 13, 100, 146))
+	for y := src.Rect.Min.Y; y < src.Rect.Max.Y; y++ {
+		for x := src.Rect.Min.X; x < src.Rect.Max.X; x++ {
+			src.SetRGBA(x, y, color.RGBA{uint8(7 * x), uint8(11 * y), uint8(x*y + 3), 255})
+		}
+	}
+	for _, zoom := range []int{50, 125, 400} {
+		page := coverSource{img: src, zoomPercent: zoom, panX: 75, panY: -25}
+		got, w, h := page.pageViewport(60, 88, 80, 88)
+		x, spanX, _ := pageAxis(src.Rect.Dx(), 60, 80, zoom, page.panX)
+		y, spanY, _ := pageAxis(src.Rect.Dy(), 88, 88, zoom, page.panY)
+		crop := src.SubImage(image.Rect(x, y, x+spanX, y+spanY).Add(src.Rect.Min))
+		want := resizeCover(crop, w, h)
+		for row := range h {
+			for col := range w {
+				a := color.RGBAModel.Convert(got.At(col, row)).(color.RGBA)
+				b := color.RGBAModel.Convert(want.At(col, row)).(color.RGBA)
+				for _, delta := range []int{int(a.R) - int(b.R), int(a.G) - int(b.G), int(a.B) - int(b.B)} {
+					if delta < -1 || delta > 1 {
+						t.Fatalf("at %d%% (%d,%d): bilinear pixel %v vs %v", zoom, col, row, a, b)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestPDFSixelNativeScale(t *testing.T) {
 	// At native scale the encoder reads the viewport directly, without
 	// passing through resizeCover's zero-origin bitmap.

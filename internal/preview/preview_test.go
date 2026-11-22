@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/draw"
 	"image/png"
 	"os"
 	"os/exec"
@@ -67,6 +68,22 @@ func TestLoadActualPDFPagesWhenPopplerIsInstalled(t *testing.T) {
 	if err != nil || page.Image == nil || page.Image.Bounds().Empty() || !strings.Contains(page.Text, "no extractable text") {
 		t.Fatalf("image page = %v, text = %q, err = %v", page.Image != nil, page.Text, err)
 	}
+	// Both Poppler transports carry the same pixels, including the inline
+	// image. Compare to its lossless PNG output, channel by channel.
+	pngBytes, err := runTool(t.Context(), 10<<20, "pdftoppm", "-f", "2", "-l", "2", "-singlefile", "-scale-to", fmt.Sprint(maxPageSide), "-png", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := png.Decode(bytes.NewReader(pngBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := image.NewRGBA(reference.Bounds())
+	draw.Draw(want, want.Bounds(), reference, reference.Bounds().Min, draw.Src)
+	got, ok := page.Image.(*image.RGBA)
+	if !ok || got.Bounds() != want.Bounds() || !bytes.Equal(got.Pix, want.Pix) {
+		t.Fatal("binary PPM and PNG pixels differ")
+	}
 	_, err = Load(t.Context(), path, 2, false)
 	if err == nil || !strings.Contains(err.Error(), "1 to 2") {
 		t.Fatalf("bounds error = %v", err)
@@ -91,7 +108,8 @@ func TestPDFFallsBackWhenToolsAreMissing(t *testing.T) {
 		t.Fatalf("unexpected tool %q", name)
 		return nil, nil
 	}
-	got, err := loadPDF(t.Context(), path, 2, true, testRunner)
+	var doc pdfDocument
+	got, err := doc.load(t.Context(), path, 2, true, testRunner)
 	if err != nil || got.Text != "safe[1m text" || got.Image != nil || got.Count != 3 || got.Index != 2 {
 		t.Fatalf("page = %+v, err = %v", got, err)
 	}
@@ -110,12 +128,5 @@ func TestPreviewBoundsAndCancellation(t *testing.T) {
 	}
 	if _, err := Load(ctx, "missing", 0, false); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled load = %v", err)
-	}
-	var imageData bytes.Buffer
-	if err := png.Encode(&imageData, image.NewGray(image.Rect(0, 0, maxPageSide+1, 1))); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := decodePage(imageData.Bytes()); err == nil {
-		t.Fatal("accepted oversized page")
 	}
 }

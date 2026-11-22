@@ -6,6 +6,7 @@ import (
 	"image"
 	"path/filepath"
 	"strings"
+	"time"
 
 	keys "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -26,8 +27,10 @@ type previewPageModel struct {
 	path                                     string
 	width, height, index, offset, generation int
 	page                                     preview.Page
+	document                                 *preview.Document
 	lines                                    []string
 	busy, graphics, textOnly, contents       bool
+	upgradeImage                             bool
 	chapter, chapterTop                      int
 	zoomPercent, panX, panY                  int
 	notice                                   string
@@ -37,13 +40,13 @@ type previewPageModel struct {
 
 func newPreviewPage(path string) previewPageModel {
 	ctx, cancel := context.WithCancel(context.Background())
-	return previewPageModel{path: path, width: 80, height: 24, zoomPercent: 100, busy: true, graphics: coverGraphicsAvailable.Load(), ctx: ctx, cancel: cancel}
+	return previewPageModel{path: path, document: preview.NewDocument(path), width: 80, height: 24, zoomPercent: 100, busy: true, graphics: coverGraphicsAvailable.Load(), ctx: ctx, cancel: cancel}
 }
 
 func (m previewPageModel) Init() tea.Cmd {
 	return func() tea.Msg {
-		page, err := preview.Load(m.ctx, m.path, m.index, m.graphics && !m.textOnly)
-		result := previewLoadedMsg{generation: m.generation, page: page, err: err}
+		page, err := m.document.Load(m.ctx, m.index, m.graphics && !m.textOnly)
+		result := previewLoadedMsg{generation: m.generation, page: page, err: err, historyWarning: m.notice}
 		if err == nil && m.page.Count == 0 && m.ctx.Err() == nil {
 			if err := recordBookOpened(m.path); err != nil {
 				result.historyWarning = "Could not update reading history: " + bookCell(safeText(err.Error()))
@@ -54,11 +57,27 @@ func (m previewPageModel) Init() tea.Cmd {
 }
 
 func (m previewPageModel) load(index int) (tea.Model, tea.Cmd) {
+	// A single turn starts immediately. When more turns arrive before its
+	// result, wait for the wheel to settle before starting another renderer.
+	coalesce := m.busy && m.page.Count > 0 && index != m.index && strings.EqualFold(filepath.Ext(m.path), ".pdf")
 	m.cancel()
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.generation++
-	m.index, m.offset, m.busy, m.contents, m.notice = index, 0, true, false, ""
-	return m, m.Init()
+	m.index, m.offset, m.busy, m.contents, m.upgradeImage, m.notice = index, 0, true, false, false, ""
+	load := m.Init()
+	if !coalesce {
+		return m, load
+	}
+	return m, func() tea.Msg {
+		timer := time.NewTimer(35 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return load()
+		case <-m.ctx.Done():
+			return nil
+		}
+	}
 }
 
 func (m previewPageModel) visibleRows() int { return max(1, m.height-6) }
@@ -77,7 +96,14 @@ func (m previewPageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case previewGraphicsMsg:
 		if m.graphics != bool(v) {
 			m.graphics = bool(v)
+			m.upgradeImage = false
 			if m.graphics && !m.textOnly && strings.EqualFold(filepath.Ext(m.path), ".pdf") && (m.busy || m.page.Image == nil) {
+				if m.busy {
+					// Finish the active extraction. The image upgrade then
+					// reuses its page count and text.
+					m.upgradeImage = true
+					return m, nil
+				}
 				return m.load(m.index)
 			}
 		}
@@ -86,7 +112,12 @@ func (m previewPageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.busy = false
+		upgrade := m.upgradeImage && v.page.Image == nil
+		m.upgradeImage = false
 		if v.err != nil {
+			if upgrade {
+				return m.load(m.index)
+			}
 			m.notice = bookCell(safeText(v.err.Error()))
 			// Keep the last good page and its navigation after a failed page turn.
 			if m.page.Count > 0 {
@@ -99,6 +130,11 @@ func (m previewPageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.page, m.index, m.notice = v.page, v.page.Index, v.historyWarning
 		m.wrap()
+		if upgrade {
+			m.busy = true
+			m.generation++
+			return m, m.Init()
+		}
 	case libraryOpenedMsg:
 		m.notice = v.message()
 	case tea.MouseWheelMsg:
