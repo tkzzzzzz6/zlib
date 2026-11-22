@@ -14,6 +14,9 @@ import (
 // Exercise the page commands against the same on-disk bookshelf as the CLI.
 func TestLibraryPageManagePreviewAndRemove(t *testing.T) {
 	file := writeEPUB(t, "Field Guide", "<p>First page.</p>")
+	// Exercise a directory alias even on machines whose temp path is canonical.
+	dir := filepath.Dir(file) + string(os.PathSeparator) + "."
+	file = dir + string(os.PathSeparator) + filepath.Base(file)
 	m := newLibraryPage(filepath.Join(t.TempDir(), "library.db"))
 	update := func(msg tea.Msg) tea.Cmd {
 		t.Helper()
@@ -38,7 +41,7 @@ func TestLibraryPageManagePreviewAndRemove(t *testing.T) {
 			t.Fatalf("edit failed: %s", m.notice)
 		}
 	}
-	edit("s", filepath.Dir(file))
+	edit("s", dir)
 	if len(m.books) != 1 || m.books[0].Title != "Field Guide" {
 		t.Fatalf("scan: %+v", m.books)
 	}
@@ -55,8 +58,14 @@ func TestLibraryPageManagePreviewAndRemove(t *testing.T) {
 	if len(m.books) != 1 {
 		t.Fatal("tag search lost the book")
 	}
-	if got := update(key("enter"))().(previewRequestedMsg).path; got != file {
-		t.Fatalf("preview path %q", got)
+	want, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := update(key("enter"))().(previewRequestedMsg).path
+	got, err := os.Stat(selected)
+	if err != nil || !os.SameFile(want, got) {
+		t.Fatalf("preview opened a different file: %q, %v", selected, err)
 	}
 	update(key("d"))
 	if !strings.Contains(ansi.Strip(m.View().Content), "file stays on disk") {
