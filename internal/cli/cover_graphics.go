@@ -93,6 +93,7 @@ type coverSource struct {
 	img           image.Image
 	width, height int
 	area          image.Rectangle
+	documentPage  bool // the whole preview body, including in narrow terminals
 }
 
 func (s coverSource) bounds() image.Rectangle {
@@ -168,13 +169,16 @@ func (m *coverGraphicsModel) sources() []coverSource {
 		if shell.typing {
 			return nil
 		}
-		if page, ok := shell.page.(coverSlotter); ok && shell.kind == "meta" {
+		if page, ok := shell.page.(coverSlotter); ok {
 			return page.coverSlots()
 		}
 		if shell.kind != "list" {
 			return nil
 		}
 		model = shell.page
+	}
+	if page, ok := model.(coverSlotter); ok {
+		return page.coverSlots()
 	}
 	if s := m.cardSource(model); s.img != nil {
 		return []coverSource{s}
@@ -221,7 +225,7 @@ func (m *coverGraphicsModel) sourceKey() string {
 	w, h := m.caps.cellSize()
 	var key strings.Builder
 	for _, s := range srcs {
-		if s.img == nil || !coverSizeFits(s.width, s.height) {
+		if s.img == nil || (!s.documentPage && !coverSizeFits(s.width, s.height)) {
 			return ""
 		}
 		fmt.Fprintf(&key, "%s/%d/%d/%d/%d/%s/%v|", s.url, s.width, s.height, w, h, m.caps.protocol(), s.bounds())
@@ -275,6 +279,9 @@ func (m *coverGraphicsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inner, resize = m.inner.Update(tea.WindowSizeMsg{Width: m.caps.cols, Height: m.caps.rows})
 			cmd = tea.Batch(cmd, resize)
 		}
+		var refresh tea.Cmd
+		m.inner, refresh = m.inner.Update(previewGraphicsMsg(supported))
+		cmd = tea.Batch(cmd, refresh)
 	}
 	key := m.sourceKey()
 	if key != m.key {
@@ -356,6 +363,11 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 	w, h := b.Dx(), b.Dy()
 	area := s.bounds()
 	maxW, maxH := area.Dx()*cw, area.Dy()*ch
+	if s.documentPage {
+		// A large terminal must not turn a bounded page raster into an
+		// unbounded bitmap during Sixel or Kitty encoding.
+		maxW, maxH = min(maxW, 2048), min(maxH, 2048)
+	}
 	if w*maxH >= h*maxW {
 		h = max(1, h*maxW/w)
 		w = maxW

@@ -81,7 +81,7 @@ The shell accepts `/search`, `/favorites`, `/recommended`, `/most-popular`,
 `/history`, `/login`, `/logout`, `/profile`, `/doctor`,
 `/config`, `/config network`, `/config download`, `/config kindle`, `/config weread`, `/config metadata`, `/theme`, `/kindle`,
 `/kindle config`, `/kindle send <file>`, `/weread`, `/weread import <file>`,
-`/weread login`, `/weread logout`, `/meta`, `/meta <file>` and `/quit`. Use `zlib version`
+`/weread login`, `/weread logout`, `/meta`, `/meta <file>`, `/library`, `/preview [file]` and `/quit`. Use `zlib version`
 outside the TUI to check the installed version.
 For automation, use direct commands and their flags, including `--json`.
 To download a selected book in the TUI, press Enter on its list row. To download
@@ -190,6 +190,19 @@ selection style.
 | Download | Esc or Ctrl+C cancels an active transfer. After completion, the page shows the full saved path and Back. Supported file types also show Send to Kindle and Send to WeRead; left/right selects an action and Enter opens it. Up/down scrolls a long path. Kindle sending and WeRead import ask for confirmation and return to the saved-file page; without a WeRead login, the QR login page opens first and the import continues after it. A download failure stays on its own page with r to retry using the same book and directory, or Esc to return. |
 
 Passwords are masked. Invalid field values stay in the editor with an error.
+
+### Local bookshelf and preview
+
+Open `/library` to manage local files offline. Press `a` to add a book,
+`s` to scan a directory, and `/` to search. On a selected row, `r` changes
+reading status, `t` edits tags, and `d` asks whether to remove the entry.
+Press Enter to preview a PDF or EPUB, or `o` to open the book in its system
+reader. The saved-file screen also offers Preview for PDF and EPUB downloads.
+
+In a preview, use left/right to change pages or chapters, up/down to scroll,
+and `c` to select an EPUB chapter. In a graphics-capable terminal, `x`
+switches between the PDF page image and text. Esc returns to the book.
+See [the bookshelf commands and PDF setup](usage.md#local-bookshelf).
 
 On Search, Favorites, Recommended, Most popular and History lists, `s` sends
 the selected book to Kindle: it downloads to the default directory, then sends

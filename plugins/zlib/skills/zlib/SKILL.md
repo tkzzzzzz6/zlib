@@ -37,6 +37,8 @@ the non-interactive forms below.
 | Find books | `zlib search "query" --json --count 10` | Object with `books`, `page`, `total_pages` |
 | Filter formats | `zlib search "query" --ext epub --ext pdf --json --count 10` | Same search object |
 | Browse saved books | `zlib favorites --json --page 1` | Object with `books`, `page`, `total_pages` |
+| Search the offline bookshelf | `zlib library list "query" --json` | Local entries with IDs, paths, tags and reading status |
+| Preview a local PDF page or EPUB chapter | `zlib preview ./books/sample.epub --page 1` | Text from the requested page or chapter |
 | Recommendations | `zlib recommended --json` | Array of books |
 | Popular books | `zlib most-popular --json` | Array of books |
 | Download history | `zlib history --json --page 1` | Object with `items`, `page`, `total_pages`; an empty page has `"items": []` |

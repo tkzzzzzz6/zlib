@@ -752,6 +752,10 @@ func handleMCPDownloadBook(ctx context.Context, req *mcp.CallToolRequest, in mcp
 			out.ISBN, out.ZlibID = embedded.isbnPart(), embedded.ZlibID
 		}
 	}
+	// A directory-confined server must keep writes inside its allowed directory.
+	if policy.AllowedDir == "" {
+		out.LibraryWarning = libraryDownloadWarning(path)
+	}
 	var toolRes *mcp.CallToolResult
 	if in.SendToKindle {
 		to, err := sendFileToKindlePlain(ctx, path)

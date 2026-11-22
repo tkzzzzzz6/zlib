@@ -17,6 +17,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/heartleo/zlib/internal/config"
+	"github.com/heartleo/zlib/internal/library"
 	zlib "github.com/heartleo/zlib/internal/zlib"
 	"github.com/spf13/cobra"
 )
@@ -54,6 +55,7 @@ type shellModel struct {
 	// deliveryReturn is the download completion page a Kindle or WeRead
 	// delivery returns to.
 	deliveryReturn  *downloadModel
+	libraryReturn   *libraryPageModel // bookshelf selection to restore after preview
 	kindlePath      string
 	wereadPath      string // file waiting for WeRead import, kept across login
 	loginForm       *inlineForm
@@ -104,6 +106,8 @@ var shellCommands = []shellCommand{
 	{"recommended", "Show recommended books"},
 	{"most-popular", "Show most popular books"},
 	{"history", "Show download history"},
+	{"library", "Browse and manage local books"},
+	{"preview", "Preview a local PDF or EPUB"},
 	{"profile", "Show account profile and download quota"},
 	{"config", "View or edit network, download, search, Kindle, WeRead and metadata settings"},
 	{"theme", "Choose a color theme"},
@@ -360,6 +364,13 @@ func (m shellModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if event, ok := msg.(shellEvent); ok {
 		if event.generation != m.generation {
 			return m, nil
+		}
+		if req, ok := event.msg.(previewRequestedMsg); ok {
+			if page, ok := m.page.(libraryPageModel); ok {
+				m.libraryReturn = &page
+				cmd := m.open("preview", newPreviewPage(req.path))
+				return m, cmd
+			}
 		}
 		if _, ok := event.msg.(tea.QuitMsg); ok {
 			cmd := m.completed()
@@ -663,6 +674,19 @@ func (m *shellModel) dispatch(value string) tea.Cmd {
 		return m.openWeRead(arg)
 	case "meta":
 		return m.openMeta(arg)
+	case "library":
+		path, err := library.DefaultPath()
+		if err != nil {
+			m.setError(safeText(err.Error()))
+			return nil
+		}
+		return m.open("library", newLibraryPage(path))
+	case "preview":
+		if arg == "" {
+			target := sendTarget{title: "Preview book", confirmTitle: "Preview this file?", action: "Preview", allowed: []string{".pdf", ".epub"}}
+			return m.open("preview-file", newSendFileModel(filePickerStartDir(), target))
+		}
+		return m.open("preview", newPreviewPage(strings.Trim(arg, "\"")))
 	}
 	c, err := loadClient()
 	if err != nil {
@@ -855,6 +879,10 @@ func (m *shellModel) completed() tea.Cmd {
 			}
 			m.wereadPath = page.savedPath
 			return m.open("weread-confirm", confirm)
+		} else if page.preview {
+			page.preview = false
+			m.deliveryReturn = &page
+			return m.open("preview", newPreviewPage(page.savedPath))
 		} else if page.fixMetadata {
 			page.fixMetadata = false
 			page.completeAction = 0
@@ -936,11 +964,23 @@ func (m *shellModel) completed() tea.Cmd {
 				return m.importWeRead(page.path)
 			case "meta-file":
 				return m.openMetaFile(page.path)
+			case "preview-file":
+				return m.open("preview", newPreviewPage(page.path))
 			}
 			return m.sendKindle(page.path)
 		}
 	case metaPageModel:
 		return m.metaDone(page)
+	case previewPageModel:
+		if m.libraryReturn != nil {
+			back := *m.libraryReturn
+			m.libraryReturn = nil
+			back.busy = true
+			return m.open("library", back)
+		}
+		if m.deliveryReturn != nil {
+			return m.returnToDownloadCompletion(noticeInfo, "")
+		}
 	case wereadLoginModel:
 		return m.wereadLoginDone(page)
 	case wereadImportModel:

@@ -2,12 +2,49 @@
 
 [README](../README.md) · [Configuration](configuration.md) · [Troubleshooting](troubleshooting.md)
 
-Complete the [quick start](../README.md#quick-start) first. Book commands use your
-saved Z-Library session.
+Complete the [quick start](../README.md#quick-start) for online commands.
+The local bookshelf and file previews work offline without signing in.
 
 Run `zlib tui` in a terminal for the persistent shell: type a query or use `/` to
 choose a command. See [terminal controls](tui.md). The commands below also work
 directly, including in scripts.
+
+## Local bookshelf
+
+`zlib library` opens your bookshelf. Use `add` for a single file or `scan`
+to index a directory recursively. Files stay in their original locations.
+
+```sh
+zlib library scan ./books
+zlib library add ./reading/sample.epub
+zlib library list
+zlib library list "sample" --json
+zlib library status 1 reading
+zlib library tags 1 reference "book club"
+zlib preview ./books/sample.pdf --page 2
+zlib preview ./reading/sample.epub
+zlib library remove 1
+```
+
+Use the local ID from `list` for edits. Reading status can be `unread`,
+`reading` or `read`. The tags command replaces the entry's tags; omit tag
+arguments to clear them. Recently opened books appear first. The index lives
+in `~/.config/zlib/library.db`.
+Each format and edition can have its own entry. Removing an entry keeps
+the file and excludes its path from later scans until explicitly added again.
+
+Downloads into a scanned directory are indexed after saving. Run `scan`
+again to discover files added by other programs, refresh metadata and mark
+missing files. A directory-confined MCP server only writes inside its allowed
+directory; scan its download folder from the CLI to update your bookshelf.
+
+`preview` shows a local PDF page or an EPUB chapter. In the terminal use
+the arrow keys to navigate, or pass `--page N` to print the text of page or
+chapter N. Piped output defaults to the first page or chapter. EPUB text
+works with the standalone binary. For PDF previews, install [Poppler](https://poppler.freedesktop.org/)
+and make `pdfinfo` and `pdftotext` available on PATH. Add `pdftoppm` for
+page images in terminals with Kitty graphics or Sixel. For scanned pages
+without selectable text, use image mode or press `o` to open a desktop reader.
 
 ## Search
 

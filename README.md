@@ -113,6 +113,10 @@ rows, the selected book's card shows its cover; other terminals show text only
 chosen e-book up online and lets you review each field before writing it. It
 needs no login ([E-book metadata](docs/metadata.md)).
 
+Open `/library` to organize downloaded books, tag them and track reading
+status offline. Press Enter on a PDF or EPUB to preview it.
+[Bookshelf commands and PDF setup](docs/usage.md#local-bookshelf).
+
 Settings live under `/config` (network, downloads, search formats, metadata, Kindle, WeRead). See
 [Terminal interface](docs/tui.md) for every screen and key.
 

@@ -48,7 +48,7 @@ func writeTempFile(t *testing.T, name string) string {
 
 func TestDownloadCompleteOffersDeliveriesByFormat(t *testing.T) {
 	tests := map[string][]string{
-		"book.epub": {actionBack, actionSendToKindle, actionSendToWeRead, actionFixMetadata},
+		"book.epub": {actionBack, actionSendToKindle, actionPreview, actionSendToWeRead, actionFixMetadata},
 		"book.mobi": {actionBack, actionSendToWeRead, actionFixMetadata},
 		"book.docx": {actionBack, actionSendToKindle, actionFixMetadata},
 		"book.fb2":  {actionBack, actionFixMetadata},
