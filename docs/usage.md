@@ -43,7 +43,8 @@ the arrow keys to navigate, or pass `--page N` to print the text of page or
 chapter N. Piped output defaults to the first page or chapter. EPUB text
 works with the standalone binary. For PDF previews, install [Poppler](https://poppler.freedesktop.org/)
 and make `pdfinfo` and `pdftotext` available on PATH. Add `pdftoppm` for
-page images in terminals with Kitty graphics or Sixel. For scanned pages
+page images in terminals with Kitty graphics or Sixel. Roll the wheel or use
+`+` and `-` to zoom a PDF image. Press `0` to fit it again. For scanned pages
 without selectable text, use image mode or press `o` to open a desktop reader.
 
 ## Search

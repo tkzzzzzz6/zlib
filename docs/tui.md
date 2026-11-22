@@ -200,8 +200,12 @@ Press Enter to preview a PDF or EPUB, or `o` to open the book in its system
 reader. The saved-file screen also offers Preview for PDF and EPUB downloads.
 
 In a preview, use left/right to change pages or chapters, up/down to scroll,
-and `c` to select an EPUB chapter. In a graphics-capable terminal, `x`
-switches between the PDF page image and text. Esc returns to the book.
+and `c` to select an EPUB chapter. On a PDF image, roll the mouse wheel up
+to enlarge the page or down to shrink it. The `+` and `-` keys also zoom.
+The title shows the scale relative to the fitted page (50% to 400%).
+Press `0` to fit the page again. While zoomed in, use up/down to pan
+vertically and Shift+left/right to pan horizontally. Left/right still turn
+pages. Press `x` to switch between the image and text, or Esc to return.
 See [the bookshelf commands and PDF setup](usage.md#local-bookshelf).
 
 On Search, Favorites, Recommended, Most popular and History lists, `s` sends

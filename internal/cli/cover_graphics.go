@@ -94,6 +94,8 @@ type coverSource struct {
 	width, height int
 	area          image.Rectangle
 	documentPage  bool // the whole preview body, including in narrow terminals
+	zoomPercent   int  // relative to a fitted PDF page; zero is the initial fit
+	panX, panY    int  // -100 and 100 select opposite edges of a zoomed page
 }
 
 func (s coverSource) bounds() image.Rectangle {
@@ -228,7 +230,7 @@ func (m *coverGraphicsModel) sourceKey() string {
 		if s.img == nil || (!s.documentPage && !coverSizeFits(s.width, s.height)) {
 			return ""
 		}
-		fmt.Fprintf(&key, "%s/%d/%d/%d/%d/%s/%v|", s.url, s.width, s.height, w, h, m.caps.protocol(), s.bounds())
+		fmt.Fprintf(&key, "%s/%d/%d/%d/%d/%s/%v/%d/%d/%d|", s.url, s.width, s.height, w, h, m.caps.protocol(), s.bounds(), s.zoomPercent, s.panX, s.panY)
 	}
 	return key.String()
 }
@@ -310,10 +312,14 @@ func (m *coverGraphicsModel) View() tea.View {
 	// briefly drawing a block thumbnail while its native encoding is pending.
 	waitingCard := len(srcs) > 0 && !srcs[0].area.Empty() && m.sourceKey() != "" && m.failedGeneration != m.generation
 	if frame != nil || waitingCard {
-		// Blank only the reserved cover cells; keep adjacent metadata and borders.
+		// A book card shares its row with metadata. A PDF image replaces
+		// the whole text body, including the margins outside its placement.
 		lines := strings.Split(v.Content, "\n")
 		for _, s := range srcs {
 			area := s.bounds()
+			if s.documentPage {
+				area.Min.X, area.Max.X = 0, s.width
+			}
 			for i, line := range lines {
 				if i >= area.Min.Y && i < area.Max.Y {
 					lines[i] = ansi.Cut(line, 0, area.Min.X) + strings.Repeat(" ", area.Dx()) + ansi.Cut(line, area.Max.X, ansi.StringWidth(line))
@@ -379,8 +385,11 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 		return nil
 	}
 	img := s.img
-	if w != b.Dx() || h != b.Dy() {
-		img = resizeCover(s.img, w, h)
+	if s.documentPage {
+		img, w, h = s.pageViewport(w, h, maxW, maxH)
+	}
+	if w != img.Bounds().Dx() || h != img.Bounds().Dy() {
+		img = resizeCover(img, w, h)
 	}
 	cols, rows := (w+cw-1)/cw, (h+ch-1)/ch
 	f := &coverFrame{protocol: c.protocol(), x: area.Min.X + (area.Dx()-cols)/2, y: area.Min.Y + (area.Dy()-rows)/2, cols: cols, rows: rows, id: id}

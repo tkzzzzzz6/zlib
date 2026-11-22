@@ -11,6 +11,7 @@ import (
 )
 
 func TestPreviewPageOpensLocalEPUBAndScrolls(t *testing.T) {
+	isolateConfigHome(t)
 	file := writeEPUB(t, "Pocket Guide", strings.Repeat("<p>Sample body paragraph.</p>", 50))
 	m := newPreviewPage(file)
 	defer m.cancel()

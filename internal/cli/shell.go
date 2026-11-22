@@ -1120,8 +1120,13 @@ func (m shellModel) View() tea.View {
 	available := m.contentHeight()
 	contentRows := available
 	var body string
+	var mouseMode tea.MouseMode
 	if m.page != nil {
-		body = m.page.View().Content
+		page := m.page.View()
+		body = page.Content
+		if !m.typing {
+			mouseMode = page.MouseMode
+		}
 		body = strings.ReplaceAll(body, "/ search", "Ctrl+F search")
 	} else if m.kind == "info" || m.kind == "login-wait" {
 		body = "zlib\n\n" + m.status
@@ -1148,10 +1153,11 @@ func (m shellModel) View() tea.View {
 		lines[i] = ansi.Truncate(lines[i], max(1, m.width), "…")
 	}
 	base := fullScreenView(m.width, m.height, strings.Join(lines, "\n"))
-	if m.status == "" || m.kind == "info" {
-		return base
+	if m.status != "" && m.kind != "info" {
+		base = m.noticeView(base)
 	}
-	return m.noticeView(base)
+	base.MouseMode = mouseMode
+	return base
 }
 
 func (m shellModel) noticeView(base tea.View) tea.View {
