@@ -40,6 +40,10 @@ directory; scan its download folder from the CLI to update your bookshelf.
 
 `preview` shows a local PDF page or an EPUB chapter. Roll the wheel down
 to read the next page or chapter and up to go back. Left/right do the same.
+Press Space to read a screen of text at a time and continue into the next
+chapter or page. On a PDF image, Space advances to the next page. Press
+`g` to enter a page or chapter number, or `?` to see shortcuts for the
+current view. Esc returns to reading from either screen.
 Pass `--page N` to print the text of page or chapter N. Piped output
 defaults to the first page or chapter. EPUB text works with the standalone
 binary. For PDF previews, install [Poppler](https://poppler.freedesktop.org/)

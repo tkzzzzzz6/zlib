@@ -21,6 +21,9 @@ type Page struct {
 	Chapters     []string
 }
 
+// EmptyChapter reports whether the selected EPUB spine item has no readable text.
+func (p Page) EmptyChapter() bool { return len(p.Chapters) > 0 && p.Text == "" }
+
 // Load reads one page without retaining state between calls.
 func Load(ctx context.Context, path string, index int, wantImage bool) (Page, error) {
 	return NewDocument(path).Load(ctx, index, wantImage)
@@ -92,11 +95,7 @@ func (d *Document) Load(ctx context.Context, index int, wantImage bool) (Page, e
 		for i, s := range chapters {
 			chapters[i] = strings.Join(strings.Fields(terminalText(s)), " ")
 		}
-		body = terminalText(body)
-		if body == "" {
-			body = "This chapter has no previewable text. Open the file in an EPUB reader to see its layout and images."
-		}
-		return Page{Title: chapters[index], Text: body, Index: index, Count: len(chapters), Chapters: chapters}, nil
+		return Page{Title: chapters[index], Text: terminalText(body), Index: index, Count: len(chapters), Chapters: chapters}, nil
 	default:
 		return Page{}, fmt.Errorf("preview supports PDF and EPUB; this file is %s", format)
 	}

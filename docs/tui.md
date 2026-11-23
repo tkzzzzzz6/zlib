@@ -200,9 +200,20 @@ Press Enter to preview a PDF or EPUB, or `o` to open the book in its system
 reader. The saved-file screen also offers Preview for PDF and EPUB downloads.
 
 In a preview, roll the wheel down for the next PDF page or EPUB chapter, or
-up for the previous one. Left/right also turn pages. Use up/down to scroll
-text. Press `c` to open the EPUB chapter list, use the wheel or arrow keys
-to select a chapter, then press Enter. On a PDF image, hold Ctrl and roll up
+up for the previous one. Left/right also turn pages or chapters. In text
+mode, up/down scrolls by line. Space advances one screen. At the bottom,
+Space continues at the top of the next chapter or page and stops at the end
+of the book. On a PDF image, Space turns to the next page.
+
+The footer shows shortcuts for the current reading mode. Press `?` for the
+full list or `g` to enter a page or chapter number starting at 1. Enter
+confirms the jump. Esc dismisses either screen and restores the reading
+position. In EPUB, press `c` to open the chapter list, use the wheel or
+arrow keys to select a chapter, then press Enter. A chapter without
+previewable text shows the available actions, including `o` to open it
+in the system reader.
+
+On a PDF image, hold Ctrl and roll up
 to zoom in or down to zoom out. The `+` and `-` keys also zoom.
 The title shows the scale relative to the fitted page (50% to 400%).
 Press `0` to fit the page again. While zoomed in, use up/down to pan

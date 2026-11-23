@@ -163,6 +163,10 @@ func init() {
 		libraryEdit("tags <id> [tag ...]", "Replace tags, or clear them by omitting tags", cobra.MinimumNArgs(1), func(s *library.Store, id int64, args []string) error { return s.SetTags(id, args) }),
 		libraryEdit("remove <id>", "Remove an entry from the bookshelf and keep its file", cobra.ExactArgs(1), func(s *library.Store, id int64, _ []string) error { return s.Remove(id) }),
 	)
+	rootCmd.AddCommand(shelf, newPreviewCommand())
+}
+
+func newPreviewCommand() *cobra.Command {
 	show := &cobra.Command{Use: "preview <file>", Short: "Preview a local PDF page or EPUB chapter", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if isInteractive() && !cmd.Flags().Changed("page") {
 			return runStandaloneShellCommand("/preview " + args[0])
@@ -175,7 +179,11 @@ func init() {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), safeText(page.Text))
+		text := page.Text
+		if page.EmptyChapter() {
+			text = "This chapter has no previewable text. Open the file in an EPUB reader to see its layout and images."
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), safeText(text))
 		if err == nil {
 			if markErr := recordBookOpened(args[0]); markErr != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Could not update reading history:", safeText(markErr.Error()))
@@ -184,5 +192,5 @@ func init() {
 		return err
 	}}
 	show.Flags().Int("page", 1, "Print the text of a page or chapter (starting at 1)")
-	rootCmd.AddCommand(shelf, show)
+	return show
 }

@@ -181,7 +181,7 @@ func TestShellPreviewForwardsWheelAndModifiers(t *testing.T) {
 	if view.MouseMode != tea.MouseModeCellMotion {
 		t.Fatal("shell did not request wheel events")
 	}
-	for _, hint := range []string{"wheel/←/→ turn", "Ctrl+wheel/+/- zoom", "esc back"} {
+	for _, hint := range []string{"wheel/←/→ pages", "Ctrl+wheel/+/- zoom", "? keys", "esc back"} {
 		if !strings.Contains(ansi.Strip(view.Content), hint) {
 			t.Fatalf("80-column preview omitted %q", hint)
 		}

@@ -40,6 +40,75 @@ func TestPreviewPageOpensLocalEPUBAndScrolls(t *testing.T) {
 	}
 }
 
+func TestEmptyEPUBChapterOffersAvailableActions(t *testing.T) {
+	isolateConfigHome(t)
+	file := writeEPUB(t, "Sample", "<img src='cover.png'/>")
+	var output strings.Builder
+	show := newPreviewCommand()
+	show.SetOut(&output)
+	show.SetArgs([]string{file, "--page", "1"})
+	if err := show.Execute(); err != nil || !strings.Contains(output.String(), "Open the file in an EPUB reader") || strings.Contains(output.String(), "c Chapters") {
+		t.Fatalf("noninteractive empty chapter: %q, %v", output.String(), err)
+	}
+	m := newPreviewPage(file)
+	defer m.cancel()
+	next, _ := m.Update(m.Init()())
+	m = next.(previewPageModel)
+	for _, tc := range []struct {
+		index, count int
+		want, absent string
+	}{
+		{0, 1, "o Open in reader", "Next chapter"},
+		{0, 2, "→ Next chapter", "Previous chapter"},
+		{1, 2, "← Previous chapter", "Next chapter"},
+	} {
+		m.index, m.page.Index, m.page.Count = tc.index, tc.index, tc.count
+		m.wrap()
+		body := ansi.Strip(m.View().Content)
+		for _, want := range []string{tc.want, "c Chapters", "o Open in reader", "no previewable text"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("missing %q in %q", want, body)
+			}
+		}
+		if strings.Contains(body, tc.absent) {
+			t.Errorf("unexpected %q in %q", tc.absent, body)
+		}
+	}
+}
+
+func TestPreviewSpaceReadsToEndBeforeTurning(t *testing.T) {
+	m := newPreviewPage("sample.epub")
+	defer m.cancel()
+	m.busy, m.height = false, 10
+	m.page = preview.Page{Chapters: []string{"One", "Two"}, Count: 2, Text: strings.Repeat("text\n", 9) + "last"}
+	m.wrap()
+	space := tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
+	for _, want := range []int{4, 6} {
+		next, cmd := m.Update(space)
+		m = next.(previewPageModel)
+		if cmd != nil || m.index != 0 || m.offset != want {
+			t.Fatalf("Space reached index %d offset %d, want 0, %d", m.index, m.offset, want)
+		}
+	}
+	next, cmd := m.Update(space)
+	m = next.(previewPageModel)
+	defer m.cancel()
+	if cmd == nil || m.index != 1 || !m.busy || m.offset != 0 {
+		t.Fatal("Space at the bottom must load the next chapter from its start")
+	}
+	m.page.Count = 3
+	next, cmd = m.Update(space)
+	if cmd != nil || next.(previewPageModel).index != 1 {
+		t.Fatal("a repeated Space skipped a chapter while it was loading")
+	}
+	m.page.Count, m.page.Index, m.page.Text, m.busy = 2, 1, "", false
+	m.wrap()
+	next, cmd = m.Update(space)
+	if cmd != nil || next.(previewPageModel).offset != 0 || next.(previewPageModel).index != 1 {
+		t.Fatal("Space must stop at the end of the book")
+	}
+}
+
 func TestPreviewPageNavigationDropsLateResponses(t *testing.T) {
 	m := newPreviewPage("book.epub")
 	defer m.cancel()
