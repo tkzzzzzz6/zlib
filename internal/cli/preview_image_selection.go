@@ -99,11 +99,17 @@ func (f *coverFrame) wordAtCell(x, y int) int {
 
 var pdfSelectionTint = image.NewUniform(color.NRGBA{R: 64, G: 136, B: 240, A: 96})
 
-func (p pageProjection) highlight(img image.Image, rects []image.Rectangle, first, end int) image.Image {
+func selectedWordRects(rects []image.Rectangle, first, end int) []image.Rectangle {
 	first, end = max(0, first), min(end, len(rects))
+	if first >= end {
+		return nil
+	}
+	return rects[first:end]
+}
+
+func (p pageProjection) highlight(img image.Image, selection []image.Rectangle) image.Image {
 	var dst *image.RGBA
-	for i := first; i < end; i++ {
-		r := rects[i]
+	for _, r := range selection {
 		if r.Empty() {
 			continue
 		}

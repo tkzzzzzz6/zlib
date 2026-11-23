@@ -469,12 +469,12 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 		return nil
 	}
 	img := s.img
+	var view pageProjection
 	var wordRects []image.Rectangle
 	if s.documentPage {
-		view := s.pageViewport(w, h, maxW, maxH)
+		view = s.pageViewport(w, h, maxW, maxH)
 		img, w, h = view.raster(img), view.size.X, view.size.Y
 		wordRects = view.wordRectangles(s.words)
-		img = view.highlight(img, wordRects, s.selectedFirst, s.selectedEnd)
 	}
 	if w != img.Bounds().Dx() || h != img.Bounds().Dy() {
 		img = resizeCover(img, w, h)
@@ -493,9 +493,11 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 		}
 	}
 	var data bytes.Buffer
+	selection := selectedWordRects(wordRects, s.selectedFirst, s.selectedEnd)
 	if f.protocol == "Kitty" {
 		compression := png.DefaultCompression
 		if s.documentPage {
+			img = view.highlight(img, selection)
 			img = compactGrayPage(img)
 			compression = png.BestSpeed
 		}
@@ -518,7 +520,8 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 		}
 		f.data = out.String()
 	} else if f.protocol == "Sixel" {
-		if !s.documentPage || !encodePageSixel(&data, img) {
+		if !s.documentPage || !encodePageSixel(&data, img, selection) {
+			img = view.highlight(img, selection)
 			if err := (&sixel.Encoder{}).Encode(&data, img); err != nil {
 				return nil
 			}

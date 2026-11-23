@@ -40,7 +40,7 @@ func textTiles(pixels []byte, width, height, stride, channels int) []bool {
 // Text pages use relatively few colors but cover many terminal cells. Keep
 // one palette index per pixel and emit one six-row band at a time. Leave
 // photographs and transparent images to the general-purpose quantizer.
-func encodePageSixel(data *bytes.Buffer, img image.Image) bool {
+func encodePageSixel(data *bytes.Buffer, img image.Image, selection []image.Rectangle) bool {
 	if region, ok := img.(pageRegion); ok {
 		sub, ok := region.Image.(interface {
 			SubImage(image.Rectangle) image.Image
@@ -104,6 +104,12 @@ func encodePageSixel(data *bytes.Buffer, img image.Image) bool {
 			if counts[index] > counts[paper] {
 				paper = index
 			}
+		}
+	}
+	if len(selection) > 0 {
+		palette = highlightSixelIndexes(indexes, width, height, palette, selection)
+		if palette == nil {
+			return false
 		}
 	}
 	_, _ = sixel.WriteRaster(data, 1, 1, width, height)

@@ -541,3 +541,23 @@ $env:ZLIB_TUI_SMOKE = '1'
 The walkthrough was run in a Windows terminal. Login masking and cancellation,
 search query/format editing, theme preview/cancellation and isolated Kindle and
 retry-setting saves were also exercised through `zlib.exe`.
+
+### PDF preview benchmarks
+
+Use the same local PDF for both runs when comparing revisions. Install Poppler
+and choose a PDF with at least two pages and several lines of text on page one.
+
+```powershell
+$env:ZLIB_BENCH_PDF = (Resolve-Path sample.pdf).Path
+go test ./internal/cli -run '^$' -bench '^BenchmarkPDFSixelSelection$' -benchmem -benchtime=4x -count=4 -cpu=1
+go test ./internal/preview -run '^$' -bench '^BenchmarkPDFUncachedTurn$' -benchtime=20x -count=1
+```
+
+The Sixel benchmark starts with a decoded page and reports encoding time,
+allocated bytes and output bytes for a clean frame, one selected word and six
+selected words across a line break. The page-turn benchmark opens page one on
+a fresh document for each sample, then times the first visit to page two with
+a warm filesystem cache. Its `ready` metric ends when the decoded page and word
+layer reach the viewer. Poppler runs the raster and text tools concurrently.
+The Go decode and layout metrics replay their captured output separately.
+Terminal writes and display refresh fall outside both benchmarks.
