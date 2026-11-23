@@ -109,6 +109,9 @@ zlib tui
 其他终端只显示文字（见[封面显示](docs/covers.md)）。`/meta` 先打开文件选择器，
 再在线查询所选电子书，写入前逐个字段确认。不需要登录（见[电子书元数据](docs/metadata.md)）。
 
+用 `/library` 打开本地书架，可以离线整理已下载的书、添加标签、标记阅读状态。
+选中 PDF 或 EPUB 按 Enter 即可预览。[书架命令与 PDF 预览配置](docs/usage.md#local-bookshelf)。
+
 设置在 `/config` 下（网络、下载、搜索格式、元数据、Kindle、微信读书）。全部页面和按键见[终端界面说明](docs/tui.md)。
 
 ## 常用命令

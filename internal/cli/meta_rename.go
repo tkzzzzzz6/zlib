@@ -350,11 +350,15 @@ func (m metaPageModel) renameTo(name string) (tea.Model, tea.Cmd) {
 		m.message = "Could not rename: " + safeText(strings.ToLower(renameErrorText(err)))
 		return m, nil
 	}
+	indexErr := updateLibraryPath(m.path, newPath)
 	if m.renamedFrom == "" {
 		m.renamedFrom = m.path
 	}
 	m.path = newPath
 	m.stage, m.message = m.renameBack, "Renamed to "+filepath.Base(newPath)
+	if indexErr != nil {
+		m.message += ". Could not update the bookshelf: " + safeText(indexErr.Error())
+	}
 	return m, nil
 }
 
@@ -669,6 +673,9 @@ func renameFromFlags(cmd *cobra.Command, path string, m *ebookmeta.Metadata) (st
 	newPath, err := renameBook(path, name)
 	if err != nil {
 		return path, renameFailure(path, name, err)
+	}
+	if err := updateLibraryPath(path, newPath); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "File renamed, but the bookshelf could not be updated:", safeText(err.Error()))
 	}
 	return newPath, nil
 }

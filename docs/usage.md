@@ -2,12 +2,62 @@
 
 [README](../README.md) · [Configuration](configuration.md) · [Troubleshooting](troubleshooting.md)
 
-Complete the [quick start](../README.md#quick-start) first. Book commands use your
-saved Z-Library session.
+Complete the [quick start](../README.md#quick-start) for online commands.
+The local bookshelf and file previews work offline without signing in.
 
 Run `zlib tui` in a terminal for the persistent shell: type a query or use `/` to
 choose a command. See [terminal controls](tui.md). The commands below also work
 directly, including in scripts.
+
+## Local bookshelf
+
+`zlib library` opens your bookshelf. Use `add` for a single file or `scan`
+to index a directory recursively. Files stay in their original locations.
+
+```sh
+zlib library scan ./books
+zlib library add ./reading/sample.epub
+zlib library list
+zlib library list "sample" --json
+zlib library status 1 reading
+zlib library tags 1 reference "book club"
+zlib preview ./books/sample.pdf --page 2
+zlib preview ./reading/sample.epub
+zlib library remove 1
+```
+
+Use the local ID from `list` for edits. Reading status can be `unread`,
+`reading` or `read`. The tags command replaces the entry's tags; omit tag
+arguments to clear them. Recently opened books appear first. The index lives
+in `~/.config/zlib/library.db`.
+Each format and edition can have its own entry. Removing an entry keeps
+the file and excludes its path from later scans until explicitly added again.
+
+Downloads into a scanned directory are indexed after saving. Run `scan`
+again to discover files added by other programs, refresh metadata and mark
+missing files. A directory-confined MCP server only writes inside its allowed
+directory; scan its download folder from the CLI to update your bookshelf.
+
+`preview` shows a local PDF page or an EPUB text chapter. For FB2, DOCX,
+MOBI, AZW and AZW3 books, press `o` on the bookshelf to open the system
+reader. In a preview, roll the wheel down
+to read the next page or chapter and up to go back. Left/right do the same.
+Press Space to read a screen of text at a time and continue into the next
+chapter or page. On a PDF image, Space advances to the next page. Press
+`g` to enter a page or chapter number, or `?` to see shortcuts for the
+current view. Esc returns to reading from either screen.
+Pass `--page N` to print the text of page or chapter N. Piped output
+defaults to the first page or chapter. EPUB text works with the standalone
+binary. For PDF previews, install [Poppler](https://poppler.freedesktop.org/)
+and make `pdfinfo` and `pdftotext` available on PATH. Add `pdftoppm` for
+page images in terminals with Kitty graphics or Sixel. Hold Ctrl and roll
+the wheel to zoom a PDF image, or press `+` and `-`. Press `0` to fit it
+again. Drag the left mouse button across words on the image, then press
+`y` or Ctrl+C to copy the selection. This uses the PDF's embedded text
+layer. Image-only scans can be viewed or opened with `o` in a desktop
+reader. Terminals without graphics show the extracted text automatically.
+On Linux, copying to the desktop clipboard uses `wl-clipboard` on Wayland
+or `xclip` or `xsel` on X11.
 
 ## Search
 

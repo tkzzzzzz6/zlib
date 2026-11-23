@@ -297,7 +297,8 @@ func TestShellMetaCommandOpensThePage(t *testing.T) {
 }
 
 func TestShellMetaDoneReportsWhatWasWritten(t *testing.T) {
-	page := metaPageModel{path: "/books/book.epub", run: newMetaRun(), applied: []string{"title", "authors"}}
+	isolateConfigHome(t)
+	page := metaPageModel{path: writeTestEPUB(t), run: newMetaRun(), applied: []string{"title", "authors"}}
 	m := newShellModel()
 	m.metaDone(page)
 	if !strings.Contains(m.status, "Updated 2 fields in book.epub") {

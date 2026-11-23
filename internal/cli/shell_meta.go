@@ -83,17 +83,26 @@ func (m *shellModel) metaDone(page metaPageModel) tea.Cmd {
 	if !wrote {
 		page.applied = nil
 	}
+	var indexErr error
+	if wrote {
+		indexErr = updateLibraryPath(page.path, page.path)
+	}
 	if m.deliveryReturn != nil {
 		// The saved-file page sends this path to Kindle and WeRead: it must be
 		// the file's name now.
 		m.deliveryReturn.savedPath = page.path
+		if indexErr != nil {
+			return m.returnToDownloadCompletion(noticeError, "File updated, but the bookshelf could not be refreshed: "+safeText(indexErr.Error()))
+		}
 		if changed {
 			return m.returnToDownloadCompletion(noticeSuccess, page.summary())
 		}
 		return m.returnToDownloadCompletion(noticeInfo, "")
 	}
 	m.restore()
-	if changed {
+	if indexErr != nil {
+		m.setError("File updated, but the bookshelf could not be refreshed: " + safeText(indexErr.Error()))
+	} else if changed {
 		m.setSuccess(page.summary())
 	}
 	return nil

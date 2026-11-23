@@ -22,20 +22,21 @@ columns or wider, command hints use two columns; smaller terminals use one.
 The hints show commands to type in the input; typing `/` opens the selectable
 command menu. Without a saved session, `zlib tui` opens the email and password
 form immediately. Press Esc to reach the signed-out start screen, where Enter
-reopens login and `/` gives access to settings and domain checks. That screen
-shows a heading, a focused Log in button rendered by `renderActionButton`, and
-the sign-in method; it adds no other explanatory text. Command hints on the
-signed-in screen use muted descriptions, matching the command dialog. A successful
-login returns to the start screen. If you tried a protected command first, its
-draft stays in the input so
-you can press Enter to continue. Login errors stay on the form for another try.
+reopens login and `/` gives access to settings and domain checks. The heading,
+focused Log in button, and sign-in method appear above the offline commands
+when space permits. On either start screen, `/library` opens the local bookshelf
+and `/preview` opens a PDF or EPUB. Command hints use muted descriptions,
+matching the command dialog. A successful login returns to the start screen.
+If you tried a protected command first, its draft stays in the input so you
+can press Enter to continue. Login errors stay on the form for another try.
 The TUI login form accepts email and password. To import a Cookie file, use
 `zlib login --cookies <file> --domain <domain>` outside the TUI.
 `/logout` asks for confirmation, clears the saved session and account pages, then
 opens the login form. If session removal fails, the current screen shows an error.
 
 Typing `/` opens a centered command dialog over the current page. It keeps the
-page and its selection in place. At 80×24, the dialog shows five commands,
+page and its selection in place. At 80×24, the dialog initially shows
+`/search`, `/favorites`, `/recommended`, `/library`, and `/preview`,
 each with its description below the name. Narrow terminals show one line per
 command. ↑/↓ cycles through matches,
 including from last to first; the list scrolls when selection leaves its visible
@@ -81,7 +82,7 @@ The shell accepts `/search`, `/favorites`, `/recommended`, `/most-popular`,
 `/history`, `/login`, `/logout`, `/profile`, `/doctor`,
 `/config`, `/config network`, `/config download`, `/config kindle`, `/config weread`, `/config metadata`, `/theme`, `/kindle`,
 `/kindle config`, `/kindle send <file>`, `/weread`, `/weread import <file>`,
-`/weread login`, `/weread logout`, `/meta`, `/meta <file>` and `/quit`. Use `zlib version`
+`/weread login`, `/weread logout`, `/meta`, `/meta <file>`, `/library`, `/preview [file]` and `/quit`. Use `zlib version`
 outside the TUI to check the installed version.
 For automation, use direct commands and their flags, including `--json`.
 To download a selected book in the TUI, press Enter on its list row. To download
@@ -190,6 +191,48 @@ selection style.
 | Download | Esc or Ctrl+C cancels an active transfer. After completion, the page shows the full saved path and Back. Supported file types also show Send to Kindle and Send to WeRead; left/right selects an action and Enter opens it. Up/down scrolls a long path. Kindle sending and WeRead import ask for confirmation and return to the saved-file page; without a WeRead login, the QR login page opens first and the import continues after it. A download failure stays on its own page with r to retry using the same book and directory, or Esc to return. |
 
 Passwords are masked. Invalid field values stay in the editor with an error.
+
+### Local bookshelf and preview
+
+Open `/library` to manage local files offline. Press `a` to add a book,
+`s` to scan a directory, and `/` to search. On a selected row, `r` changes
+reading status, `t` edits tags, and `d` asks whether to remove the entry.
+Press Enter to preview a PDF or EPUB, or `o` to open the book in its system
+reader. The saved-file screen also offers Preview for PDF and EPUB downloads.
+
+Run `/preview` to pick a PDF or EPUB from the downloads directory. After
+choosing a file, use the arrow keys to select Preview, Open with default app,
+or Cancel, in that order. Enter activates the selected action. Esc closes
+the choices and returns to the same file in the picker.
+
+In a preview, roll the wheel down for the next PDF page or EPUB chapter, or
+up for the previous one. Left/right also turn pages or chapters. In text
+mode, up/down scrolls by line. Space advances one screen. At the bottom,
+Space continues at the top of the next chapter or page and stops at the end
+of the book. On a PDF image, Space turns to the next page.
+
+The footer shows shortcuts for the current reading mode. Press `?` for the
+full list or `g` to enter a page or chapter number starting at 1. Enter
+confirms the jump. Esc dismisses either screen and restores the reading
+position. In EPUB, press `c` to open the chapter list, use the wheel or
+arrow keys to select a chapter, then press Enter. A chapter without
+previewable text shows the available actions, including `o` to open it
+in the system reader.
+
+On a PDF image, hold Ctrl and roll up
+to zoom in or down to zoom out. The `+` and `-` keys also zoom.
+The title shows the scale relative to the fitted page (50% to 400%).
+Press `0` to fit the page again. While zoomed in, use up/down to pan
+vertically and Shift+left/right to pan horizontally. To copy a passage,
+drag across its words with the left mouse button, release, and press `y`
+or Ctrl+C. Ctrl+C copies only while a selection is active. Image-only
+scans need a text layer for selection. Press Esc to return from the preview.
+See [the bookshelf commands and PDF setup](usage.md#local-bookshelf).
+
+The PDF preview keeps the three most recently read pages in memory while
+the book is open. Turning back can reuse the page without running Poppler
+again. Returning to a recent zoom on the same page can also reuse its
+encoded image. Larger terminal windows still take more pixels to transmit.
 
 On Search, Favorites, Recommended, Most popular and History lists, `s` sends
 the selected book to Kindle: it downloads to the default directory, then sends
@@ -504,3 +547,23 @@ $env:ZLIB_TUI_SMOKE = '1'
 The walkthrough was run in a Windows terminal. Login masking and cancellation,
 search query/format editing, theme preview/cancellation and isolated Kindle and
 retry-setting saves were also exercised through `zlib.exe`.
+
+### PDF preview benchmarks
+
+Use the same local PDF for both runs when comparing revisions. Install Poppler
+and choose a PDF with at least two pages and several lines of text on page one.
+
+```powershell
+$env:ZLIB_BENCH_PDF = (Resolve-Path sample.pdf).Path
+go test ./internal/cli -run '^$' -bench '^BenchmarkPDFSixelSelection$' -benchmem -benchtime=4x -count=4 -cpu=1
+go test ./internal/preview -run '^$' -bench '^BenchmarkPDFUncachedTurn$' -benchtime=20x -count=1
+```
+
+The Sixel benchmark starts with a decoded page and reports encoding time,
+allocated bytes and output bytes for a clean frame, one selected word and six
+selected words across a line break. The page-turn benchmark opens page one on
+a fresh document for each sample, then times the first visit to page two with
+a warm filesystem cache. Its `ready` metric ends when the decoded page and word
+layer reach the viewer. Poppler runs the raster and text tools concurrently.
+The Go decode and layout metrics replay their captured output separately.
+Terminal writes and display refresh fall outside both benchmarks.

@@ -18,6 +18,12 @@ func newStandaloneShellCommand(command string) (shellModel, error) {
 	if strings.HasPrefix(command, "/meta") {
 		m.standaloneTitle = "Metadata"
 	}
+	if strings.HasPrefix(command, "/library") {
+		m.standaloneTitle = "Local bookshelf"
+	}
+	if strings.HasPrefix(command, "/preview") {
+		m.standaloneTitle = "Book preview"
+	}
 	m.dispatch(command)
 	if m.page == nil && m.kind == "" {
 		return m, fmt.Errorf("%s", m.status)
@@ -37,9 +43,9 @@ func runStandaloneShellCommand(command string) error {
 	if err != nil {
 		return err
 	}
-	// The metadata page draws covers; the others have none to draw.
+	// The metadata and local book pages can draw images.
 	var result tea.Model
-	if strings.HasPrefix(command, "/meta") {
+	if strings.HasPrefix(command, "/meta") || strings.HasPrefix(command, "/library") || strings.HasPrefix(command, "/preview") {
 		result, err = runCoverProgram(m)
 	} else {
 		result, err = tea.NewProgram(m).Run()

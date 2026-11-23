@@ -27,6 +27,10 @@ environment variables on your machine: `~/.config/zlib/` and `.env` files
 ([Configuration](configuration.md)). zlib never prints a key: settings screens
 and `--json` show it as hidden.
 
+The local bookshelf stores registered directories, book paths, metadata, tags,
+reading status and the last opened time in `~/.config/zlib/library.db`.
+File previews are processed on your computer.
+
 ## Through an AI agent
 
 When an agent uses zlib through the [MCP server](mcp.md) or the plugins, the

@@ -161,6 +161,9 @@ func runMeta(cmd *cobra.Command, args []string) error {
 			if err := ebookmeta.WriteFile(path, changes); err != nil {
 				return metaError(path, err)
 			}
+			if err := updateLibraryPath(path, path); err != nil {
+				fmt.Fprintln(stderr, "File updated, but the bookshelf could not be refreshed:", safeText(err.Error()))
+			}
 		}
 	}
 

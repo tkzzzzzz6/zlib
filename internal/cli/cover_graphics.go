@@ -12,11 +12,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/sixel"
+	"github.com/heartleo/zlib/internal/preview"
 	zlib "github.com/heartleo/zlib/internal/zlib"
 )
 
@@ -25,6 +27,9 @@ const coverProbe = "\x1b_Ga=q,i=5917697,s=1,v=1,f=24,t=d;AAAA\x1b\\\x1b[c\x1b[16
 const coverDelete = "\x1b_Ga=d,d=I,i=5917697,q=2\x1b\\"
 const syncBegin = "\x1b[?2026h"
 const syncEnd = "\x1b[?2026l"
+const coverWake = "\x1b7\x1b8"
+
+var kittyPageSequence atomic.Uint32
 
 type coverCapabilities struct {
 	kitty, sixel            bool
@@ -89,10 +94,17 @@ func (c coverCapabilities) protocol() string {
 }
 
 type coverSource struct {
-	url           string
-	img           image.Image
-	width, height int
-	area          image.Rectangle
+	url                        string
+	img                        image.Image
+	width, height              int
+	area                       image.Rectangle
+	documentPage               bool // the whole preview body, including in narrow terminals
+	zoomPercent                int  // relative to a fitted PDF page; zero is the initial fit
+	panX, panY                 int  // -100 and 100 select opposite edges of a zoomed page
+	words                      []preview.Word
+	selectedFirst, selectedEnd int // half-open range in reading order
+	selecting                  bool
+	selectionAnchor            int
 }
 
 func (s coverSource) bounds() image.Rectangle {
@@ -104,9 +116,12 @@ func (s coverSource) bounds() image.Rectangle {
 
 type coverFrame struct {
 	data, protocol          string
+	pageKey                 string // page identity shared by its zoom and pan frames
 	x, y, cols, rows        int
 	pixelWidth, pixelHeight int
-	id                      int // the Kitty image id
+	cellWidth, cellHeight   int
+	id                      int               // the Kitty image id
+	wordRects               []image.Rectangle // viewport pixels in reading order
 	// more are further images drawn with this one, such as the second cover
 	// of a comparison. They are erased and redrawn together.
 	more []*coverFrame
@@ -125,18 +140,56 @@ type coverEncodedMsg struct {
 	frame      *coverFrame
 }
 
+type coverRenderKey struct {
+	layout                     string // sources, placement, protocol and cell size
+	zoomPercent, panX, panY    int    // viewport within the same PDF page
+	selectedFirst, selectedEnd int
+}
+
+// Keep a few completed views of the current PDF page for wheel reversals and
+// fit resets. The four slots together retain at most 8 MiB of encoded data.
+type pageViewportCache [4]struct {
+	key   coverRenderKey
+	frame *coverFrame
+}
+
+func (c *pageViewportCache) remember(key coverRenderKey, frame *coverFrame) {
+	// A drag can produce many intermediate selections. Keep the clean
+	// viewport handy so clearing the highlight needs no new encoding.
+	if frame == nil || frame.pageKey == "" || key.selectedEnd > key.selectedFirst {
+		return
+	}
+	if len(frame.data)+len(frame.wordRects)*4*(strconv.IntSize/8) > 2<<20 {
+		return
+	}
+	copy(c[1:], c[:len(c)-1])
+	c[0].key, c[0].frame = key, frame
+}
+
+func (c *pageViewportCache) lookup(key coverRenderKey) *coverFrame {
+	for _, entry := range c {
+		if entry.key == key {
+			return entry.frame
+		}
+	}
+	return nil
+}
+
 // The outer model owns terminal capabilities across shell page generations.
 // Network requests and keyboard navigation remain in the existing shared pages.
 type coverGraphicsModel struct {
-	inner            tea.Model
-	output           *coverOutput
-	caps             coverCapabilities
-	generation       uint64
-	key              string
-	frame            *coverFrame
-	encoding         bool
-	supported        bool
-	failedGeneration uint64
+	inner             tea.Model
+	output            *coverOutput
+	caps              coverCapabilities
+	generation        uint64
+	key               coverRenderKey
+	frame             *coverFrame
+	viewports         pageViewportCache
+	encoding          bool
+	encodingKey       coverRenderKey
+	encodingAnchor    int
+	supported         bool
+	encodedGeneration uint64
 }
 
 func runCoverProgram(model tea.Model) (tea.Model, error) {
@@ -168,13 +221,16 @@ func (m *coverGraphicsModel) sources() []coverSource {
 		if shell.typing {
 			return nil
 		}
-		if page, ok := shell.page.(coverSlotter); ok && shell.kind == "meta" {
+		if page, ok := shell.page.(coverSlotter); ok {
 			return page.coverSlots()
 		}
 		if shell.kind != "list" {
 			return nil
 		}
 		model = shell.page
+	}
+	if page, ok := model.(coverSlotter); ok {
+		return page.coverSlots()
 	}
 	if s := m.cardSource(model); s.img != nil {
 		return []coverSource{s}
@@ -213,20 +269,26 @@ func cardCoverSource(d bookDetailState, url string, width, height int) coverSour
 	return coverSource{url: url, img: d.coverImages[url], width: width, height: height, area: bookCardCoverBounds()}
 }
 
-func (m *coverGraphicsModel) sourceKey() string {
+func (m *coverGraphicsModel) sourceKey() coverRenderKey {
 	srcs := m.sources()
 	if len(srcs) == 0 || m.caps.protocol() == "" {
-		return ""
+		return coverRenderKey{}
 	}
 	w, h := m.caps.cellSize()
-	var key strings.Builder
+	var key coverRenderKey
+	var layout strings.Builder
 	for _, s := range srcs {
-		if s.img == nil || !coverSizeFits(s.width, s.height) {
-			return ""
+		if s.img == nil || (!s.documentPage && !coverSizeFits(s.width, s.height)) {
+			return coverRenderKey{}
 		}
-		fmt.Fprintf(&key, "%s/%d/%d/%d/%d/%s/%v|", s.url, s.width, s.height, w, h, m.caps.protocol(), s.bounds())
+		fmt.Fprintf(&layout, "%s/%d/%d/%d/%d/%s/%v|", s.url, s.width, s.height, w, h, m.caps.protocol(), s.bounds())
+		if s.documentPage {
+			key.zoomPercent, key.panX, key.panY = s.zoomPercent, s.panX, s.panY
+			key.selectedFirst, key.selectedEnd = s.selectedFirst, s.selectedEnd
+		}
 	}
-	return key.String()
+	key.layout = layout.String()
+	return key
 }
 
 func (m *coverGraphicsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -249,11 +311,18 @@ func (m *coverGraphicsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case coverEncodedMsg:
 		m.encoding = false
 		if event.generation == m.generation {
+			m.encodedGeneration = event.generation
 			m.frame = event.frame
-			wake = tea.Raw("\x1b7\x1b8")
-			if event.frame == nil {
-				m.failedGeneration = event.generation
+			m.viewports.remember(m.key, event.frame)
+			if event.frame == nil && m.source().documentPage {
+				m.inner, cmd = m.inner.Update(previewImageFailedMsg{})
 			}
+			wake = tea.Raw(coverWake)
+		} else if event.frame != nil && m.continuingDrag() {
+			// A long drag can move faster than an encoder. Show completed
+			// progress on this gesture while starting its newest range below.
+			m.frame = event.frame
+			wake = tea.Raw(coverWake)
 		}
 	default:
 		if size, ok := msg.(tea.WindowSizeMsg); ok {
@@ -262,7 +331,7 @@ func (m *coverGraphicsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.caps.pixelWidth, m.caps.pixelHeight = 0, 0
 			query = tea.Raw("\x1b[16t\x1b[14t" + iTermCellSizeQuery)
 		}
-		m.inner, cmd = m.inner.Update(msg)
+		m.inner, cmd = m.inner.Update(m.imagePointer(msg))
 	}
 	// Tell the pages whether covers exist at all. They stay hidden until a
 	// protocol and pixel metrics are confirmed; on a change, replay the window
@@ -275,38 +344,66 @@ func (m *coverGraphicsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inner, resize = m.inner.Update(tea.WindowSizeMsg{Width: m.caps.cols, Height: m.caps.rows})
 			cmd = tea.Batch(cmd, resize)
 		}
+		var refresh tea.Cmd
+		m.inner, refresh = m.inner.Update(previewGraphicsMsg(supported))
+		cmd = tea.Batch(cmd, refresh)
 	}
 	key := m.sourceKey()
 	if key != m.key {
-		m.key = key
 		m.generation++
-		m.frame = nil
-		wake = tea.Raw("\x1b7\x1b8")
+		// During zoom or pan the old pixels still belong to this page. Keep
+		// them on screen while the single encoder catches up with input.
+		if key.layout != m.key.layout {
+			m.frame = nil
+			m.viewports = pageViewportCache{}
+			wake = tea.Raw(coverWake)
+		} else if cached := m.viewports.lookup(key); cached != nil {
+			m.frame = cached
+			m.encodedGeneration = m.generation
+			wake = tea.Raw(coverWake)
+		}
+		m.key = key
 	}
-	if key != "" && m.frame == nil && !m.encoding && m.failedGeneration != m.generation {
+	if key.layout != "" && !m.encoding && m.encodedGeneration != m.generation {
 		m.encoding = true
 		srcs, c, generation := m.sources(), m.caps, m.generation
+		m.encodingKey, m.encodingAnchor = key, srcs[0].selectionAnchor
 		encode := func() tea.Msg { return coverEncodedMsg{generation, encodeCoverFrames(srcs, c)} }
 		return m, tea.Batch(cmd, query, wake, encode)
 	}
 	return m, tea.Batch(cmd, query, wake)
 }
 
+func (m *coverGraphicsModel) continuingDrag() bool {
+	pending := m.encodingKey
+	if pending.selectedFirst >= pending.selectedEnd {
+		return false
+	}
+	s := m.source()
+	pending.selectedFirst, pending.selectedEnd = m.key.selectedFirst, m.key.selectedEnd
+	return s.selecting && m.encodingAnchor == s.selectionAnchor && pending == m.key
+}
+
 func (m *coverGraphicsModel) View() tea.View {
 	v := m.inner.View()
 	frame := m.frame
-	if m.key == "" || m.key != m.sourceKey() {
+	key := m.sourceKey()
+	if key.layout == "" || m.key != key {
 		frame = nil
 	}
 	srcs := m.sources()
 	// A capable terminal should show the final pixel cover once, rather than
 	// briefly drawing a block thumbnail while its native encoding is pending.
-	waitingCard := len(srcs) > 0 && !srcs[0].area.Empty() && m.sourceKey() != "" && m.failedGeneration != m.generation
+	waitingCard := len(srcs) > 0 && !srcs[0].area.Empty() && key.layout != "" && m.encodedGeneration != m.generation
 	if frame != nil || waitingCard {
-		// Blank only the reserved cover cells; keep adjacent metadata and borders.
+		// A book card shares its row with metadata. A PDF image replaces
+		// the whole text body, including the margins outside its placement.
 		lines := strings.Split(v.Content, "\n")
 		for _, s := range srcs {
 			area := s.bounds()
+			if s.documentPage {
+				area.Min.X, area.Max.X = 0, s.width
+			}
 			for i, line := range lines {
 				if i >= area.Min.Y && i < area.Max.Y {
 					lines[i] = ansi.Cut(line, 0, area.Min.X) + strings.Repeat(" ", area.Dx()) + ansi.Cut(line, area.Max.X, ansi.StringWidth(line))
@@ -356,6 +453,11 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 	w, h := b.Dx(), b.Dy()
 	area := s.bounds()
 	maxW, maxH := area.Dx()*cw, area.Dy()*ch
+	if s.documentPage {
+		// A large terminal must not turn a bounded page raster into an
+		// unbounded bitmap during Sixel or Kitty encoding.
+		maxW, maxH = min(maxW, 2048), min(maxH, 2048)
+	}
 	if w*maxH >= h*maxW {
 		h = max(1, h*maxW/w)
 		w = maxW
@@ -367,15 +469,39 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 		return nil
 	}
 	img := s.img
-	if w != b.Dx() || h != b.Dy() {
-		img = resizeCover(s.img, w, h)
+	var view pageProjection
+	var wordRects []image.Rectangle
+	if s.documentPage {
+		view = s.pageViewport(w, h, maxW, maxH)
+		img, w, h = view.raster(img), view.size.X, view.size.Y
+		wordRects = view.wordRectangles(s.words)
+	}
+	if w != img.Bounds().Dx() || h != img.Bounds().Dy() {
+		img = resizeCover(img, w, h)
 	}
 	cols, rows := (w+cw-1)/cw, (h+ch-1)/ch
 	f := &coverFrame{protocol: c.protocol(), x: area.Min.X + (area.Dx()-cols)/2, y: area.Min.Y + (area.Dy()-rows)/2, cols: cols, rows: rows, id: id}
 	f.pixelWidth, f.pixelHeight = w, h
+	if s.documentPage {
+		f.wordRects = wordRects
+		f.pageKey = s.url
+		f.cellWidth, f.cellHeight = cw, ch
+		if f.protocol == "Kitty" {
+			// Retransmitting a Kitty image ID discards its existing placements.
+			// Keep this frame separate until the writer can retire the old one.
+			f.id = int(0x40000000 | (kittyPageSequence.Add(1) & 0x3fffffff))
+		}
+	}
 	var data bytes.Buffer
+	selection := selectedWordRects(wordRects, s.selectedFirst, s.selectedEnd)
 	if f.protocol == "Kitty" {
-		if err := png.Encode(&data, img); err != nil {
+		compression := png.DefaultCompression
+		if s.documentPage {
+			img = view.highlight(img, selection)
+			img = compactGrayPage(img)
+			compression = png.BestSpeed
+		}
+		if err := (&png.Encoder{CompressionLevel: compression}).Encode(&data, img); err != nil {
 			return nil
 		}
 		payload := base64.StdEncoding.EncodeToString(data.Bytes())
@@ -388,14 +514,17 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 			}
 			opts := fmt.Sprintf("m=%d", more)
 			if offset == 0 {
-				opts = fmt.Sprintf("a=T,f=100,t=d,i=%d,q=2,C=1,m=%d", id, more)
+				opts = fmt.Sprintf("a=T,f=100,t=d,i=%d,q=2,C=1,m=%d", f.id, more)
 			}
 			out.WriteString(ansi.KittyGraphics([]byte(payload[offset:end]), opts))
 		}
 		f.data = out.String()
 	} else if f.protocol == "Sixel" {
-		if err := (&sixel.Encoder{}).Encode(&data, img); err != nil {
-			return nil
+		if !s.documentPage || !encodePageSixel(&data, img, selection) {
+			img = view.highlight(img, selection)
+			if err := (&sixel.Encoder{}).Encode(&data, img); err != nil {
+				return nil
+			}
 		}
 		f.data = ansi.SixelGraphics(0, 1, 0, data.Bytes())
 	} else {
@@ -406,12 +535,15 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 
 // Graphics bypass the cell renderer but share its output writer. Each picture
 // follows the text frame in the same write; no independent stdout writes race
-// the renderer. Repaint after every write since Sixel has no retained placement.
+// the renderer.
 type coverOutput struct {
 	*os.File
 	target      io.Writer
 	mu          sync.Mutex
 	want, shown *coverFrame
+	// A first Sixel written by a raw wake may precede the renderer's erase
+	// of the text fallback. Repaint once when that cell update arrives.
+	awaitingText bool
 }
 
 func (w *coverOutput) set(f *coverFrame) { w.mu.Lock(); w.want = f; w.mu.Unlock() }
@@ -436,6 +568,55 @@ func eraseCover(f *coverFrame) string {
 	return out.String()
 }
 
+// Sixel overwrites pixels in place. Clear just the old cells exposed by a
+// replacement, including a trailing cell when fewer of its pixels are covered.
+func eraseSixelMargins(old, next *coverFrame) string {
+	occupied := image.Rect(old.x, old.y, old.x+old.cols, old.y+old.rows)
+	covered := image.Rect(next.x, next.y, next.x+next.cols, next.y+next.rows)
+	cw, ch := next.cellWidth, next.cellHeight
+	if next.pixelWidth%cw != 0 && next.x*cw+next.pixelWidth < old.x*cw+old.pixelWidth {
+		covered.Max.X--
+	}
+	if next.pixelHeight%ch != 0 && next.y*ch+next.pixelHeight < old.y*ch+old.pixelHeight {
+		covered.Max.Y--
+	}
+	overlap := occupied.Intersect(covered)
+	if overlap == occupied {
+		return ""
+	}
+	var out strings.Builder
+	out.WriteString("\x1b7")
+	clearSpan := func(y, left, right int) {
+		if right > left {
+			fmt.Fprintf(&out, "\x1b[%d;%dH%s", y+1, left+1, strings.Repeat(" ", right-left))
+		}
+	}
+	for y := occupied.Min.Y; y < occupied.Max.Y; y++ {
+		if y < overlap.Min.Y || y >= overlap.Max.Y {
+			clearSpan(y, occupied.Min.X, occupied.Max.X)
+		} else {
+			clearSpan(y, occupied.Min.X, overlap.Min.X)
+			clearSpan(y, overlap.Max.X, occupied.Max.X)
+		}
+	}
+	out.WriteString("\x1b8")
+	return out.String()
+}
+
+func (f *coverFrame) survivesText(p []byte) bool {
+	if bytes.Contains(p, []byte("\x1b[2J")) || bytes.Contains(p, []byte("\x1b[3J")) {
+		return false
+	}
+	if f.pageKey == "" {
+		// Kitty retains card placements. Sixel cards share rows with text
+		// and must be repainted after the cell renderer writes to them.
+		return f.protocol == "Kitty"
+	}
+	// The PDF body is reserved, so header and footer edits leave it alone.
+	// The renderer may erase to the end of the screen on a full repaint.
+	return !bytes.Contains(p, []byte("\x1b[J")) && !bytes.Contains(p, []byte("\x1b[0J")) && !bytes.Contains(p, []byte("\x1b[1J"))
+}
+
 func (w *coverOutput) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -449,8 +630,18 @@ func (w *coverOutput) Write(p []byte) (int, error) {
 	}
 	var out bytes.Buffer
 	out.WriteString(syncBegin)
+	var eraseAfter string
+	old := w.shown
+	samePage := old != nil && want != nil && old.pageKey != "" && old.pageKey == want.pageKey && old.protocol == want.protocol
 	if w.shown != want {
-		out.WriteString(eraseCover(w.shown))
+		switch {
+		case samePage && want.protocol == "Kitty":
+			eraseAfter = eraseCover(old)
+		case samePage && want.protocol == "Sixel" && old.cellWidth == want.cellWidth && old.cellHeight == want.cellHeight:
+			out.WriteString(eraseSixelMargins(old, want))
+		default:
+			out.WriteString(eraseCover(old))
+		}
 	}
 	// Append graphics before an existing synchronized-update terminator.
 	end := bytes.HasSuffix(p, []byte(syncEnd))
@@ -458,16 +649,14 @@ func (w *coverOutput) Write(p []byte) (int, error) {
 		p = p[:len(p)-len(syncEnd)]
 	}
 	out.Write(p)
-	// Kitty keeps a placed image until it is deleted, so resending the PNG on
-	// every text frame (spinner ticks, cursor moves) only burns bandwidth.
-	// Sixel has no retained placement and a screen clear drops Kitty images too.
-	retained := want != nil && want == w.shown && want.protocol == "Kitty" &&
-		!bytes.Contains(p, []byte("\x1b[2J")) && !bytes.Contains(p, []byte("\x1b[3J"))
+	wake := bytes.Contains(p, []byte(coverWake))
+	retained := want != nil && want == w.shown && (!w.awaitingText || wake) && want.survivesText(p)
 	if want != nil && !retained {
 		for _, p := range want.all() {
 			fmt.Fprintf(&out, "\x1b7\x1b[%d;%dH%s\x1b8", p.y+1, p.x+1, p.data)
 		}
 	}
+	out.WriteString(eraseAfter)
 	out.WriteString(syncEnd)
 	n, err := w.target.Write(out.Bytes())
 	if err != nil {
@@ -477,6 +666,7 @@ func (w *coverOutput) Write(p []byte) (int, error) {
 		return 0, io.ErrShortWrite
 	}
 	w.shown = want
+	w.awaitingText = wake && want != nil && want.pageKey != "" && want.protocol == "Sixel" && (w.awaitingText || !samePage)
 	length := len(p)
 	if end {
 		length += len(syncEnd)
@@ -490,4 +680,5 @@ func (w *coverOutput) cleanup() {
 	_, _ = io.WriteString(w.target, eraseCover(w.shown))
 	w.shown = nil
 	w.want = nil
+	w.awaitingText = false
 }

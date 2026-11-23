@@ -234,7 +234,7 @@ func TestCoverGraphicsDetectionAndFallback(t *testing.T) {
 		page := pixelCoverFixture()
 		m.inner = page
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-		if m.sourceKey() != "" || m.frame != nil {
+		if m.sourceKey().layout != "" || m.frame != nil {
 			t.Fatal("narrow resize retained pixel preview")
 		}
 	}
@@ -354,13 +354,13 @@ func TestCoverGraphicsShellOverlayAndPixelMetrics(t *testing.T) {
 	m := &coverGraphicsModel{inner: shellModel{kind: "list", page: page}, output: &coverOutput{target: &buf}}
 	m.Update(uv.CellSizeEvent{Width: 8, Height: 16})
 	m.Update(uv.PrimaryDeviceAttributesEvent{4})
-	if m.sourceKey() == "" {
+	if m.sourceKey().layout == "" {
 		t.Fatal("shell preview missing")
 	}
 	shell := m.inner.(shellModel)
 	shell.typing = true
 	m.inner = shell
-	if m.sourceKey() != "" {
+	if m.sourceKey().layout != "" {
 		t.Fatal("image would cover command palette")
 	}
 	c := coverCapabilities{kitty: true, cols: 120, rows: 24, pixelWidth: 960, pixelHeight: 384}
@@ -385,7 +385,7 @@ func TestBookCardAutomaticallyUsesPixelCover(t *testing.T) {
 			} else {
 				m.Update(uv.PrimaryDeviceAttributesEvent{4})
 			}
-			if m.sourceKey() == "" || m.source().bounds() != bookCardCoverBounds() {
+			if m.sourceKey().layout == "" || m.source().bounds() != bookCardCoverBounds() {
 				t.Fatal("card did not select automatic pixel rendering")
 			}
 			if strings.Contains(m.View().Content, "▀") {
@@ -435,23 +435,23 @@ func TestHistoryCardPixelsAndOverlays(t *testing.T) {
 	h := historySelectModel{width: 120, height: 24, state: historyStateResults, items: []zlib.DownloadHistoryItem{{ID: "1", Hash: "fixture"}}, details: details, detailOpen: true}
 	var buf bytes.Buffer
 	m := &coverGraphicsModel{inner: h, output: &coverOutput{target: &buf}, caps: coverCapabilities{kitty: true, cellWidth: 8, cellHeight: 16}}
-	if m.sourceKey() == "" || m.source().bounds() != bookCardCoverBounds() {
+	if m.sourceKey().layout == "" || m.source().bounds() != bookCardCoverBounds() {
 		t.Fatal("history card missing pixel cover")
 	}
 	h.confirmDownload = true
 	m.inner = h
-	if m.sourceKey() != "" {
+	if m.sourceKey().layout != "" {
 		t.Fatal("card image would overlap download confirmation")
 	}
 	h.confirmDownload = false
 	h.state = historyStateConfirmDelete
 	m.inner = h
-	if m.sourceKey() != "" {
+	if m.sourceKey().layout != "" {
 		t.Fatal("card image would overlap delete confirmation")
 	}
 	s := shellModel{kind: "list", page: fixture, typing: true}
 	m.inner = s
-	if m.sourceKey() != "" {
+	if m.sourceKey().layout != "" {
 		t.Fatal("card image would overlap command dialog")
 	}
 }

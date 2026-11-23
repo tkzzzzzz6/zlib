@@ -72,7 +72,8 @@ type downloadResult struct {
 	ISBN *embeddedISBN `json:"isbn,omitempty"`
 	// ZlibID is the Z-Library record ID (id:hash) written into the file, if it
 	// could be.
-	ZlibID string `json:"zlib_id,omitempty"`
+	ZlibID         string `json:"zlib_id,omitempty"`
+	LibraryWarning string `json:"library_warning,omitempty"`
 }
 
 // kindleResult reports the Send to Kindle step of a download.
@@ -131,6 +132,10 @@ func runDownload(m downloadModel, deliver deliveries, cmd *cobra.Command) error 
 		path = abs
 	}
 	result := downloadResult{ID: dm.id, Name: dm.bookName, Path: path, Size: dm.savedSize, ISBN: dm.embedded.isbnPart()}
+	result.LibraryWarning = dm.libraryWarning
+	if dm.libraryWarning != "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), dm.libraryWarning)
+	}
 	if dm.embedded != nil {
 		result.ZlibID = dm.embedded.ZlibID
 	}
@@ -237,6 +242,7 @@ func (m downloadModel) runPlain(status io.Writer) (downloadModel, error) {
 			fmt.Fprintf(status, "Recorded the Z-Library ID %s in the file metadata\n", safeText(embedded.ZlibID))
 		}
 	}
+	m.libraryWarning = libraryDownloadWarning(result.FilePath)
 	return m, nil
 }
 
@@ -314,6 +320,8 @@ type downloadModel struct {
 	autoKindle     bool // explicit list shortcut; skip directory and send dialogs
 	sendToWeRead   bool
 	fixMetadata    bool
+	preview        bool
+	libraryWarning string
 	noEmbed        bool          // --no-embed: leave the file's ISBN alone
 	embedded       *embeddedISBN // what the download recorded in the file
 	// book is the Z-Library record fetched before the download; its ISBN
@@ -332,9 +340,10 @@ const downloadProgressInterval = 66 * time.Millisecond
 type fetchDoneMsg struct{ book zlib.Book }
 type progressMsg struct{ written, total int64 }
 type downloadDoneMsg struct {
-	path     string
-	size     int64
-	embedded *embeddedISBN
+	path           string
+	size           int64
+	embedded       *embeddedISBN
+	libraryWarning string
 }
 type errMsg struct{ err error }
 
@@ -442,7 +451,7 @@ func (m downloadModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Fix metadata all see the ISBN. A failure is not worth
 				// interrupting the page for.
 				embedded, _ := m.embedISBN(result.FilePath, msg.book)
-				emit(downloadDoneMsg{path: result.FilePath, size: result.Size, embedded: embedded})
+				emit(downloadDoneMsg{path: result.FilePath, size: result.Size, embedded: embedded, libraryWarning: libraryDownloadWarning(result.FilePath)})
 			}
 			close(ch)
 		}()
@@ -461,6 +470,7 @@ func (m downloadModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sendToKindle = actions[m.completeAction] == actionSendToKindle
 				m.sendToWeRead = actions[m.completeAction] == actionSendToWeRead
 				m.fixMetadata = actions[m.completeAction] == actionFixMetadata
+				m.preview = actions[m.completeAction] == actionPreview
 				return m, tea.Quit
 			case "esc", "q", "ctrl+c":
 				m.sendToKindle, m.sendToWeRead, m.fixMetadata = false, false, false
@@ -509,6 +519,10 @@ func (m downloadModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if e := msg.embedded; e != nil && m.completeMessage == "" {
 			m.completeMessage, m.completeTone = embeddedISBNMessage(e), noticeSuccess
 		}
+		m.libraryWarning = msg.libraryWarning
+		if m.libraryWarning != "" {
+			m.completeMessage, m.completeTone = m.libraryWarning, noticeError
+		}
 		m.state = stateComplete
 		if m.autoKindle {
 			m.sendToKindle = true
@@ -556,6 +570,7 @@ const (
 	actionSendToKindle = "Send to Kindle"
 	actionSendToWeRead = "Send to WeRead"
 	actionFixMetadata  = "Fix metadata"
+	actionPreview      = "Preview"
 )
 
 func (m downloadModel) canSendToKindle() bool {
@@ -568,6 +583,9 @@ func (m downloadModel) completeActions() []string {
 	actions := []string{actionBack}
 	if m.canSendToKindle() {
 		actions = append(actions, actionSendToKindle)
+	}
+	if canPreviewBook(m.savedPath) {
+		actions = append(actions, actionPreview)
 	}
 	if weread.SupportedFormat(m.savedPath) {
 		actions = append(actions, actionSendToWeRead)

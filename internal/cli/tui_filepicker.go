@@ -15,6 +15,7 @@ import (
 type sendTarget struct {
 	title, confirmTitle, note, action, unsupported string
 	allowed                                        []string
+	openDefaultApp                                 bool
 	// check, if set, validates a chosen file before confirmation and
 	// returns the note shown in the confirmation instead of note.
 	check func(path string) (string, error)
@@ -38,6 +39,12 @@ var (
 		allowed:      weread.ImportFormats,
 		check:        wereadCheckFile,
 	}
+	previewFileTarget = sendTarget{
+		title:          "Preview book",
+		confirmTitle:   "Open this book?",
+		allowed:        []string{".pdf", ".epub"},
+		openDefaultApp: true,
+	}
 )
 
 // sendFileModel picks a local file to send to target. Only folders and
@@ -49,6 +56,8 @@ type sendFileModel struct {
 	width, height                       int
 	editing, accepted, confirm, focused bool
 	path, message, note                 string
+	choice                              int
+	openRequest                         uint64
 }
 
 func newKindleFileModel(dir string) sendFileModel { return newSendFileModel(dir, kindleTarget) }
@@ -72,6 +81,12 @@ func formatList(exts []string) string {
 
 func (m sendFileModel) Init() tea.Cmd { return m.files.load() }
 func (m sendFileModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if opened, ok := msg.(previewFileOpenedMsg); ok {
+		if opened.request == m.openRequest {
+			m.message = opened.result.message()
+		}
+		return m, nil
+	}
 	if size, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = size.Width, size.Height
 		m.files.SetHeight(max(1, size.Height-8))
@@ -79,6 +94,9 @@ func (m sendFileModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if k, ok := msg.(tea.KeyPressMsg); ok {
 		if m.confirm {
+			if m.target.openDefaultApp {
+				return m.updatePreviewChoice(k.String())
+			}
 			switch k.String() {
 			case "esc", "ctrl+c", "n":
 				m.confirm = false
@@ -143,6 +161,7 @@ func (m sendFileModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.path = path
 		m.confirm = true
 		m.focused = false
+		m.choice = 0
 		m.message = ""
 	}
 	return m, cmd
@@ -160,7 +179,11 @@ func (m sendFileModel) View() tea.View {
 	}
 	v := screenView(m.width, m.height, m.target.title, subtitle, body, status, uiKey("esc", "cancel"), uiKey("enter", "open/select"), uiKey("←", "parent"), uiKey("/", "path"))
 	if m.confirm {
-		v.Content = confirmationDialog(v.Content, m.width, m.height, m.target.confirmTitle, filepath.Base(m.path), "", m.note, m.target.action, m.focused, false)
+		if m.target.openDefaultApp {
+			v.Content = m.previewChoiceView(v.Content)
+		} else {
+			v.Content = confirmationDialog(v.Content, m.width, m.height, m.target.confirmTitle, filepath.Base(m.path), "", m.note, m.target.action, m.focused, false)
+		}
 	}
 	return v
 }
