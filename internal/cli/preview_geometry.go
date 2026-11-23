@@ -12,9 +12,14 @@ const (
 	maxPageZoom = 400
 )
 
-// pageViewport crops the source before scaling so a zoomed page only needs
-// a bitmap as large as the visible viewport. Covers always use their full image.
-func (s coverSource) pageViewport(fitW, fitH, maxW, maxH int) (image.Image, int, int) {
+// The same source crop and output dimensions drive rendering, selection and
+// mouse hit testing, including when an earlier zoom is still on screen.
+type pageProjection struct {
+	full, crop image.Rectangle
+	size       image.Point
+}
+
+func (s coverSource) pageViewport(fitW, fitH, maxW, maxH int) pageProjection {
 	zoom := s.zoomPercent
 	if zoom == 0 {
 		zoom = 100
@@ -24,17 +29,21 @@ func (s coverSource) pageViewport(fitW, fitH, maxW, maxH int) (image.Image, int,
 	x, width, outW := pageAxis(b.Dx(), fitW, maxW, zoom, s.panX)
 	y, height, outH := pageAxis(b.Dy(), fitH, maxH, zoom, s.panY)
 	crop := image.Rect(x, y, x+width, y+height).Add(b.Min)
-	if outW == width && outH == height {
-		if crop == b && b.Min == (image.Point{}) {
-			return s.img, outW, outH
+	return pageProjection{full: b, crop: crop, size: image.Pt(outW, outH)}
+}
+
+func (p pageProjection) raster(img image.Image) image.Image {
+	if p.crop.Size() == p.size {
+		if p.crop == p.full && p.full.Min == (image.Point{}) {
+			return img
 		}
-		return pageRegion{Image: s.img, rect: crop}, outW, outH
+		return pageRegion{Image: img, rect: p.crop}
 	}
-	dst := image.NewRGBA(image.Rect(0, 0, outW, outH))
+	dst := image.NewRGBA(image.Rectangle{Max: p.size})
 	// Sampling the original image and source rectangle lets the scaler use
 	// its concrete pixel buffers, including on a cropped or offset page.
-	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), s.img, crop, draw.Src, nil)
-	return dst, outW, outH
+	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, p.crop, draw.Src, nil)
+	return dst
 }
 
 // pageAxis maps the visible output pixels to a span of the source image.

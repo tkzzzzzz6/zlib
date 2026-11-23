@@ -19,6 +19,16 @@ type Page struct {
 	Index, Count int
 	Image        image.Image
 	Chapters     []string
+	Words        []Word
+	WordsError   string // empty when extraction succeeds, including on scanned pages
+}
+
+// Word is a selectable word in reading order. Its box uses fractions of the
+// displayed raster measured from the top left. Line is zero-based.
+type Word struct {
+	Text           string
+	X0, Y0, X1, Y1 float64
+	Line           int
 }
 
 // EmptyChapter reports whether the selected EPUB spine item has no readable text.

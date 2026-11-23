@@ -3,8 +3,10 @@ package preview
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +39,9 @@ func (f *fakePDF) run(_ context.Context, _ int, name string, args ...string) ([]
 	case "pdftoppm":
 		return f.image, nil
 	case "pdftotext":
+		if slices.Contains(args, "-bbox-layout") {
+			return fmt.Appendf(nil, `<page width="40" height="10"><line><word xMin="0" yMin="0" xMax="12" yMax="9">text</word><word xMin="13" yMin="0" xMax="17" yMax="9">%s</word></line></page>`, args[1]), nil
+		}
 		return []byte("text " + args[1]), nil
 	}
 	panic(name)
@@ -69,13 +74,13 @@ func TestPDFDocumentSharesModesAndEvictsLeastRecentlyUsedPage(t *testing.T) {
 	load(0, false)
 	load(1, true)
 	load(0, true)
-	fake.check(t, 1, 2, 2)
+	fake.check(t, 1, 3, 2)
 	load(2, true)
 	load(3, true)
 	load(0, true)
-	fake.check(t, 1, 4, 4)
+	fake.check(t, 1, 5, 4)
 	load(1, true)
-	fake.check(t, 1, 5, 5)
+	fake.check(t, 1, 6, 5)
 	if len(doc.pdf.pages) > recentPDFPages {
 		t.Fatal("recent page budget exceeded")
 	}
@@ -94,17 +99,17 @@ func TestPDFDocumentRetriesOnlyTheFailedFormat(t *testing.T) {
 	if err != nil || got.Image == nil {
 		t.Fatalf("recovery = %+v, %v", got, err)
 	}
-	fake.check(t, 1, 1, 2)
+	fake.check(t, 1, 2, 2)
 	fake.failNext["pdftotext"] = true
 	got, err = doc.Load(t.Context(), 1, true)
-	if err != nil || got.Image == nil || got.Text != "pdftotext unavailable" {
+	if err != nil || got.Image == nil || got.WordsError != "pdftotext unavailable" {
 		t.Fatalf("image fallback = %+v, %v", got, err)
 	}
 	got, err = doc.Load(t.Context(), 1, true)
-	if err != nil || got.Text != "text 2" {
+	if err != nil || got.Text != "text 2" || len(got.Words) != 2 || got.WordsError != "" {
 		t.Fatalf("text recovery = %+v, %v", got, err)
 	}
-	fake.check(t, 1, 3, 3)
+	fake.check(t, 1, 4, 3)
 }
 
 func TestPDFDocumentInvalidatesAfterEditAndReplacement(t *testing.T) {

@@ -25,8 +25,9 @@ const (
 type toolRunner func(ctx context.Context, limit int, name string, args ...string) ([]byte, error)
 
 type pdfDocument struct {
-	count int
-	pages []pdfPage // most recently used first
+	count    int
+	pages    []pdfPage // most recently used first
+	wordTool string    // a fallback selected when an earlier pdftotext lacks -bbox-layout
 }
 
 type pdfPage struct {
@@ -34,6 +35,7 @@ type pdfPage struct {
 	image  image.Image
 	text   string
 	textOK bool // a scan can have a successful but empty text extraction
+	layer  *pdfWordLayer
 }
 
 func pdfPageCount(ctx context.Context, path string, run toolRunner) (int, error) {
@@ -72,7 +74,7 @@ func (d *pdfDocument) load(ctx context.Context, path string, index int, wantImag
 		entry = d.pages[pos]
 	}
 	number := strconv.Itoa(index + 1)
-	var imageErr, textErr error
+	var imageErr, textErr, wordsErr error
 	var render sync.WaitGroup
 	if wantImage && entry.image == nil {
 		render.Go(func() {
@@ -85,20 +87,43 @@ func (d *pdfDocument) load(ctx context.Context, path string, index int, wantImag
 			}
 		})
 	}
-	if !entry.textOK {
-		var data []byte
-		data, textErr = run(ctx, 512<<10, "pdftotext", "-f", number, "-l", number, "-layout", "-enc", "UTF-8", path, "-")
-		if textErr == nil {
-			entry.text, entry.textOK = terminalText(string(data)), true
-		}
+	if wantImage && entry.layer == nil {
+		// Both tools use the MediaBox by default. Extract positions while
+		// Poppler renders; an ordinary graphical turn needs two processes.
+		entry.layer, wordsErr = d.wordLayer(ctx, number, path, run)
 	}
 	render.Wait()
 	if err := ctx.Err(); err != nil {
 		return Page{}, err
 	}
+	if (!wantImage || entry.image == nil) && !entry.textOK {
+		// Preserve Poppler's physical spacing for the CLI, text-only
+		// terminals, and fallback when the raster tool is unavailable.
+		var data []byte
+		data, textErr = run(ctx, 512<<10, "pdftotext", "-f", number, "-l", number, "-layout", "-enc", "UTF-8", path, "-")
+		if err := ctx.Err(); err != nil {
+			return Page{}, err
+		}
+		if textErr == nil {
+			entry.text, entry.textOK = terminalText(string(data)), true
+		}
+	}
 	page := Page{Title: terminalText(filepath.Base(path)), Index: index, Count: d.count, Text: entry.text}
 	if wantImage {
 		page.Image = entry.image
+		if entry.image != nil && entry.layer != nil {
+			entry.layer.fit(entry.image.Bounds())
+			page.Words = entry.layer.words
+			if !entry.textOK {
+				page.Text = entry.layer.text
+			}
+		}
+		if wordsErr != nil {
+			page.WordsError = terminalText(wordsErr.Error())
+			if !entry.textOK && entry.image != nil {
+				page.Text = page.WordsError
+			}
+		}
 	}
 	if !entry.textOK && page.Image == nil {
 		return Page{}, errors.Join(imageErr, textErr)
@@ -111,10 +136,6 @@ func (d *pdfDocument) load(ctx context.Context, path string, index int, wantImag
 	}
 	copy(d.pages[1:pos+1], d.pages[:pos])
 	d.pages[0] = entry
-	if textErr != nil {
-		page.Text = textErr.Error()
-		return page, nil
-	}
 	if page.Text == "" {
 		page.Text = "This page has no extractable text. Open the PDF in a reader or use a graphics-capable terminal with Poppler's pdftoppm."
 		if imageErr != nil {
@@ -141,8 +162,9 @@ func (o *toolOutput) Write(p []byte) (int, error) {
 
 func runTool(ctx context.Context, limit int, name string, args ...string) ([]byte, error) {
 	bin, err := exec.LookPath(name)
+	name = filepath.Base(name)
 	if err != nil {
-		return nil, fmt.Errorf("install Poppler and put %s on PATH to preview this PDF", name)
+		return nil, fmt.Errorf("install Poppler and put %s on PATH to preview this PDF: %w", name, err)
 	}
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()

@@ -33,6 +33,11 @@ func twoPagePDF(t *testing.T) string {
 		"<< /Type /Page /Parent 2 0 R /Resources << >> /Contents 7 0 R >>",
 		stream("q 20 0 0 20 10 10 cm BI /W 1 /H 1 /CS /RGB /BPC 8 /F /AHx ID FF9900> EI Q"),
 	}
+	return writePDFFixture(t, objects)
+}
+
+func writePDFFixture(t *testing.T, objects []string) string {
+	t.Helper()
 	var buf bytes.Buffer
 	buf.WriteString("%PDF-1.4\n")
 	var offsets []int
@@ -65,7 +70,7 @@ func TestLoadActualPDFPagesWhenPopplerIsInstalled(t *testing.T) {
 		t.Fatalf("text page = %+v, %v", page, err)
 	}
 	page, err = Load(t.Context(), path, 1, true)
-	if err != nil || page.Image == nil || page.Image.Bounds().Empty() || !strings.Contains(page.Text, "no extractable text") {
+	if err != nil || page.Image == nil || page.Image.Bounds().Empty() || !strings.Contains(page.Text, "no extractable text") || len(page.Words) != 0 || page.WordsError != "" {
 		t.Fatalf("image page = %v, text = %q, err = %v", page.Image != nil, page.Text, err)
 	}
 	// Both Poppler transports carry the same pixels, including the inline

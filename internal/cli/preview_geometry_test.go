@@ -89,7 +89,8 @@ func TestPDFBilinearViewportMatchesReference(t *testing.T) {
 	}
 	for _, zoom := range []int{50, 125, 400} {
 		page := coverSource{img: src, zoomPercent: zoom, panX: 75, panY: -25}
-		got, w, h := page.pageViewport(60, 88, 80, 88)
+		viewport := page.pageViewport(60, 88, 80, 88)
+		got, w, h := viewport.raster(src), viewport.size.X, viewport.size.Y
 		x, spanX, _ := pageAxis(src.Rect.Dx(), 60, 80, zoom, page.panX)
 		y, spanY, _ := pageAxis(src.Rect.Dy(), 88, 88, zoom, page.panY)
 		crop := src.SubImage(image.Rect(x, y, x+spanX, y+spanY).Add(src.Rect.Min))

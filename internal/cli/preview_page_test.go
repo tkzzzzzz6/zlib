@@ -133,7 +133,7 @@ func TestPreviewPageNavigationDropsLateResponses(t *testing.T) {
 	}
 }
 
-func TestPreviewPDFGraphicFits80ColumnsAndTogglesText(t *testing.T) {
+func TestPreviewPDFGraphicIgnoresXAndFallsBackToText(t *testing.T) {
 	p := newPreviewPage("book.pdf")
 	defer p.cancel()
 	p.graphics, p.busy = true, false
@@ -143,14 +143,15 @@ func TestPreviewPDFGraphicFits80ColumnsAndTogglesText(t *testing.T) {
 	if outer.sourceKey().layout == "" || outer.source().bounds() != image.Rect(1, 3, 79, 21) {
 		t.Fatal("PDF did not reserve the 80x24 preview body")
 	}
-	next, _ := p.Update(key("x"))
+	next, cmd := p.Update(key("x"))
 	p = next.(previewPageModel)
-	if len(p.coverSlots()) != 0 || !strings.Contains(p.View().Content, "PDF text") {
-		t.Fatal("text toggle failed")
+	if cmd != nil || len(p.coverSlots()) != 1 {
+		t.Fatal("x should leave the displayed PDF image in place")
 	}
 	next, _ = p.Update(previewGraphicsMsg(false))
-	if next.(previewPageModel).graphics {
-		t.Fatal("capability loss ignored")
+	p = next.(previewPageModel)
+	if len(p.coverSlots()) != 0 || !strings.Contains(p.View().Content, "PDF text") {
+		t.Fatal("a terminal without graphics should show the extracted text")
 	}
 }
 

@@ -10,10 +10,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func (m previewPageModel) canToggleImage() bool {
-	return !m.busy && m.page.Count > 0 && m.graphics && strings.EqualFold(filepath.Ext(m.path), ".pdf")
-}
-
 // spaceAction also determines whether Space belongs in the reading footer.
 func (m previewPageModel) spaceAction() string {
 	if m.index+1 >= m.page.Count {
@@ -47,7 +43,12 @@ func (m previewPageModel) previewHints() []keys.Binding {
 		nav, shortNav = uiKey("wheel/←/→", unit), uiKey("←/→", unit)
 		if !m.busy {
 			if m.showingImage() {
-				other = append(other, uiKey("Ctrl+wheel/+/-", "zoom"))
+				if m.hasSelection() {
+					other = append(other, uiKey("y", "copy"))
+				} else if len(m.page.Words) > 0 {
+					other = append(other, uiKey("drag", "select"))
+				}
+				other = append(other, uiKey("Ctrl+wheel", "zoom"))
 			} else if len(m.lines) > m.visibleRows() {
 				other = append(other, uiKey("↑/↓", "scroll"))
 			}
@@ -62,9 +63,6 @@ func (m previewPageModel) previewHints() []keys.Binding {
 			}
 			if m.showingImage() && m.zoomPercent != 100 {
 				other = append(other, uiKey("0", "fit"))
-			}
-			if m.canToggleImage() {
-				other = append(other, uiKey("x", "text/image"))
 			}
 			other = append(other, uiKey("g", "jump"))
 		}
@@ -124,6 +122,11 @@ func (m previewPageModel) helpLines() []string {
 				rows = append(rows, [2]string{"Space", advance})
 			}
 			if m.showingImage() {
+				if len(m.page.Words) > 0 {
+					rows = append(rows,
+						[2]string{"Left drag", "Select words on the page."},
+						[2]string{"y or Ctrl+C", "Copy the selected text."})
+				}
 				rows = append(rows,
 					[2]string{"+/- or Ctrl+wheel", "Zoom in or out."},
 					[2]string{"0", "Fit the full page."})
@@ -143,9 +146,6 @@ func (m previewPageModel) helpLines() []string {
 			rows = append(rows, [2]string{"g", "Jump to a " + unit + " by number."})
 			if len(m.page.Chapters) > 0 {
 				rows = append(rows, [2]string{"c", "Choose a chapter from the list."})
-			}
-			if m.canToggleImage() {
-				rows = append(rows, [2]string{"x", "Switch between text and image."})
 			}
 		}
 	}

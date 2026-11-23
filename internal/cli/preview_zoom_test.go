@@ -23,7 +23,7 @@ func TestPreviewCtrlWheelZoomAndFit(t *testing.T) {
 		t.Helper()
 		next, cmd := p.Update(msg)
 		if cmd != nil {
-			t.Fatal("zoom and text toggles should reuse the loaded PDF")
+			t.Fatal("zoom should reuse the loaded PDF")
 		}
 		p = next.(previewPageModel)
 	}
@@ -53,12 +53,12 @@ func TestPreviewCtrlWheelZoomAndFit(t *testing.T) {
 	wantZoom("50%")
 	step(key("0"))
 	wantZoom("100%")
-	step(key("x"))
+	step(previewGraphicsMsg(false))
 	if view := p.View(); view.MouseMode != tea.MouseModeCellMotion || !strings.Contains(view.Content, "First line") {
 		t.Fatal("text mode must receive page turns and show the extracted text")
 	}
 	step(wheelUp)
-	step(key("x"))
+	step(previewGraphicsMsg(true))
 	wantZoom("100%")
 }
 
@@ -181,7 +181,7 @@ func TestShellPreviewForwardsWheelAndModifiers(t *testing.T) {
 	if view.MouseMode != tea.MouseModeCellMotion {
 		t.Fatal("shell did not request wheel events")
 	}
-	for _, hint := range []string{"wheel/←/→ pages", "Ctrl+wheel/+/- zoom", "? keys", "esc back"} {
+	for _, hint := range []string{"wheel/←/→ pages", "Ctrl+wheel zoom", "? keys", "esc back"} {
 		if !strings.Contains(ansi.Strip(view.Content), hint) {
 			t.Fatalf("80-column preview omitted %q", hint)
 		}

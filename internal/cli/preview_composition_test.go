@@ -45,10 +45,10 @@ func TestPDFZoomKeepsLastFrameUntilLatestViewportIsReady(t *testing.T) {
 	}
 	key('-')
 	lastZoom := m.generation
-	key('x')
+	key('?')
 	m.Update(coverEncodedMsg{lastZoom, initial})
 	if visible() != nil {
-		t.Fatal("in-flight image survived the switch to text")
+		t.Fatal("in-flight image covered the shortcuts panel")
 	}
 }
 
@@ -118,9 +118,12 @@ func TestPDFImageClearsTextAtBothMargins(t *testing.T) {
 		t.Fatal("page failed to encode")
 	}
 	checkMargins("image displayed")
-	m.frame, m.encodedGeneration = nil, m.generation
+	m.Update(coverEncodedMsg{generation: m.generation})
 	if got := render()[3]; got != line {
 		t.Fatalf("encoding failure lost the text fallback: %q", got)
+	}
+	if m.inner.(shellModel).page.(previewPageModel).showingImage() {
+		t.Fatal("the text fallback retained graphical controls")
 	}
 }
 

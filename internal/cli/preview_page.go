@@ -11,11 +11,13 @@ import (
 	keys "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/heartleo/zlib/internal/preview"
 )
 
 type previewGraphicsMsg bool
+type previewImageFailedMsg struct{}
 
 type previewLoadedMsg struct {
 	generation     int
@@ -30,7 +32,9 @@ type previewPageModel struct {
 	page                                     preview.Page
 	document                                 *preview.Document
 	lines                                    []string
-	busy, graphics, textOnly, contents       bool
+	busy, graphics, contents                 bool
+	selection                                previewSelection
+	writeClipboard                           func(string) error
 	help, jumping                            bool
 	helpOffset                               int
 	jumpInput                                textinput.Model
@@ -45,12 +49,12 @@ type previewPageModel struct {
 
 func newPreviewPage(path string) previewPageModel {
 	ctx, cancel := context.WithCancel(context.Background())
-	return previewPageModel{path: path, document: preview.NewDocument(path), width: 80, height: 24, zoomPercent: 100, busy: true, graphics: coverGraphicsAvailable.Load(), ctx: ctx, cancel: cancel}
+	return previewPageModel{path: path, document: preview.NewDocument(path), width: 80, height: 24, zoomPercent: 100, busy: true, graphics: coverGraphicsAvailable.Load(), ctx: ctx, cancel: cancel, writeClipboard: clipboard.WriteAll}
 }
 
 func (m previewPageModel) Init() tea.Cmd {
 	return func() tea.Msg {
-		page, err := m.document.Load(m.ctx, m.index, m.graphics && !m.textOnly)
+		page, err := m.document.Load(m.ctx, m.index, m.graphics)
 		result := previewLoadedMsg{generation: m.generation, page: page, err: err, historyWarning: m.notice}
 		if err == nil && m.page.Count == 0 && m.ctx.Err() == nil {
 			if err := recordBookOpened(m.path); err != nil {
@@ -68,6 +72,7 @@ func (m previewPageModel) load(index int) (tea.Model, tea.Cmd) {
 	m.cancel()
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.generation++
+	m.selection = previewSelection{}
 	m.index, m.offset, m.busy, m.contents, m.upgradeImage, m.notice = index, 0, true, false, false, ""
 	load := m.Init()
 	if !coalesce {
@@ -110,6 +115,9 @@ func (m *previewPageModel) wrap() {
 func (m previewPageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
+		if m.width != v.Width || m.height != v.Height {
+			m.selection = previewSelection{}
+		}
 		m.width, m.height = v.Width, v.Height
 		m.wrap()
 		m.chapterTop = visibleListOffset(m.chapterTop, m.chapter, len(m.page.Chapters), m.visibleRows())
@@ -119,11 +127,15 @@ func (m previewPageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.jumping {
 			m.jumpInput.SetWidth(max(1, m.width-3))
 		}
+	case previewImageFailedMsg:
+		m.page.Image = nil
+		m.selection = previewSelection{}
 	case previewGraphicsMsg:
 		if m.graphics != bool(v) {
+			m.selection = previewSelection{}
 			m.graphics = bool(v)
 			m.upgradeImage = false
-			if m.graphics && !m.textOnly && strings.EqualFold(filepath.Ext(m.path), ".pdf") && (m.busy || m.page.Image == nil) {
+			if m.graphics && strings.EqualFold(filepath.Ext(m.path), ".pdf") && (m.busy || m.page.Image == nil) {
 				if m.busy {
 					// Finish the active extraction. The image upgrade then
 					// reuses its page count and text.
@@ -154,6 +166,7 @@ func (m previewPageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.zoomPercent > 100 && m.page.Count > 0 && m.page.Index != v.page.Index {
 			m.panX, m.panY = 0, -100 // Start the next enlarged page at the top.
 		}
+		m.selection = previewSelection{}
 		m.page, m.index, m.notice = v.page, v.page.Index, v.historyWarning
 		m.wrap()
 		if upgrade {
@@ -163,6 +176,10 @@ func (m previewPageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case libraryOpenedMsg:
 		m.notice = v.message()
+	case previewImagePointerMsg:
+		m.selectWord(v)
+	case previewCopiedMsg:
+		m.copied(v)
 	case tea.MouseWheelMsg:
 		return m.wheel(v)
 	case tea.KeyPressMsg:
@@ -235,10 +252,12 @@ func (m previewPageModel) key(k string) (tea.Model, tea.Cmd) {
 	}
 	switch k {
 	case "?":
+		m.selection = previewSelection{}
 		m.help, m.helpOffset = true, 0
 		return m, nil
 	case "g":
 		if !m.busy && m.page.Count > 0 {
+			m.selection = previewSelection{}
 			return m.openJump()
 		}
 		return m, nil
@@ -259,7 +278,14 @@ func (m previewPageModel) key(k string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch k {
-	case "q", "esc", "ctrl+c":
+	case "y":
+		return m, m.copySelection()
+	case "ctrl+c":
+		if m.hasSelection() {
+			return m, m.copySelection()
+		}
+		fallthrough
+	case "q", "esc":
 		m.cancel()
 		return m, tea.Quit
 	case "o":
@@ -281,13 +307,6 @@ func (m previewPageModel) key(k string) (tea.Model, tea.Cmd) {
 			m.contents, m.chapter = true, m.index
 			m.chapterTop = visibleListOffset(0, m.chapter, len(m.page.Chapters), m.visibleRows())
 		}
-	case "x":
-		if !m.busy && m.graphics && strings.EqualFold(filepath.Ext(m.path), ".pdf") {
-			m.textOnly = !m.textOnly
-			if !m.textOnly && m.page.Image == nil {
-				return m.load(m.index)
-			}
-		}
 	default:
 		if m.showingImage() {
 			m.imageKey(k)
@@ -299,7 +318,11 @@ func (m previewPageModel) key(k string) (tea.Model, tea.Cmd) {
 }
 
 func (m *previewPageModel) setZoom(percent int) {
-	m.zoomPercent = max(minPageZoom, min(maxPageZoom, percent))
+	percent = max(minPageZoom, min(maxPageZoom, percent))
+	if percent != m.zoomPercent {
+		m.selection = previewSelection{}
+	}
+	m.zoomPercent = percent
 	if m.zoomPercent <= 100 {
 		m.panX, m.panY = 0, 0
 	}
@@ -317,6 +340,7 @@ func (m *previewPageModel) imageKey(k string) {
 		if m.zoomPercent <= 100 {
 			return
 		}
+		oldX, oldY := m.panX, m.panY
 		switch k {
 		case "up":
 			m.panY = max(-100, m.panY-25)
@@ -327,11 +351,14 @@ func (m *previewPageModel) imageKey(k string) {
 		case "shift+right":
 			m.panX = min(100, m.panX+25)
 		}
+		if m.panX != oldX || m.panY != oldY {
+			m.selection = previewSelection{}
+		}
 	}
 }
 
 func (m previewPageModel) showingImage() bool {
-	return m.graphics && !m.busy && !m.contents && !m.textOnly && m.page.Image != nil && m.width >= 4 && m.height >= 8
+	return m.graphics && !m.busy && !m.contents && m.page.Image != nil && m.width >= 4 && m.height >= 8
 }
 
 func (m previewPageModel) coverSlots() []coverSource {
@@ -344,6 +371,8 @@ func (m previewPageModel) coverSlots() []coverSource {
 		url: fmt.Sprintf("page:%s/%d/%d", m.path, m.index, m.generation), img: m.page.Image,
 		width: m.width, height: m.height, area: area, documentPage: true,
 		zoomPercent: m.zoomPercent, panX: m.panX, panY: m.panY,
+		words: m.page.Words, selectedFirst: m.selection.first, selectedEnd: m.selection.end,
+		selecting: m.selection.dragging, selectionAnchor: m.selection.anchor,
 	}}
 }
 
@@ -388,9 +417,7 @@ func (m previewPageModel) View() tea.View {
 	}
 	if m.showingImage() {
 		title += fmt.Sprintf(" · %d%%", m.zoomPercent)
-		if m.zoomPercent > 100 && status == "" {
-			status = "↑/↓ pan vertically · shift+←/→ pan horizontally"
-		}
+		status = m.imageStatus()
 	}
 	return m.previewView(title, subtitle, body, status, m.previewHints()...)
 }

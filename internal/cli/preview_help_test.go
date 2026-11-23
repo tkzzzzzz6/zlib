@@ -36,11 +36,14 @@ func TestPreviewHintsFollowModeAndViewport(t *testing.T) {
 	check([]string{"pages", "zoom", "space next", "? keys", "esc back"}, []string{"scroll", "chapters", "pan"})
 	p.zoomPercent = 125
 	check([]string{"pan", "zoom"}, []string{"scroll"})
-	p.textOnly = true
-	check([]string{"text/image", "pages"}, []string{"scroll", "zoom", "pan"})
+	p.zoomPercent = 100
+	p.page.Words = []preview.Word{{Text: "sample"}}
+	check([]string{"drag select", "Ctrl+wheel zoom", "space next"}, []string{"text/image"})
+	p.graphics = false
+	check([]string{"pages"}, []string{"scroll", "zoom", "pan", "drag select", "text/image"})
 	p.page.Text = strings.Repeat("long text\n", 30)
 	p.wrap()
-	check([]string{"scroll", "text/image"}, []string{"zoom"})
+	check([]string{"scroll"}, []string{"zoom", "text/image"})
 	p.path = "example.epub"
 	p.page.Chapters = []string{"One", "Two", "Three"}
 	check([]string{"scroll", "←/→ chapters", "c contents", "space next"}, []string{"text/image", "zoom"})
@@ -72,10 +75,12 @@ func TestPreviewHelpListsActionsForTheActiveReader(t *testing.T) {
 		}
 	}
 	check([]string{"PDF image", "Space", "Jump to a page", "Ctrl+wheel", "Fit the full page", "system reader"}, []string{"chapter", "Scroll through", "Pan vertically"})
+	p.page.Words = []preview.Word{{Text: "sample"}}
+	check([]string{"Left drag", "Ctrl+C", "Copy the selected text"}, []string{"Switch between"})
 	p.zoomPercent = 125
 	check([]string{"Pan vertically", "Pan horizontally"}, nil)
-	p.textOnly = true
-	check([]string{"PDF text", "Space", "Jump to a page", "Switch between"}, []string{"Pan vertically", "Ctrl+wheel", "Scroll through"})
+	p.graphics = false
+	check([]string{"PDF text", "Space", "Jump to a page"}, []string{"Pan vertically", "Ctrl+wheel", "Scroll through", "Switch between", "Left drag"})
 	p.path = "example.epub"
 	p.page.Chapters = []string{"First", "Second"}
 	p.page.Text = strings.Repeat("x\n", 30)
@@ -147,6 +152,6 @@ func TestPreviewSpaceHintsMatchRemainingTextAndPages(t *testing.T) {
 	p.page = preview.Page{Index: 1, Count: 2, Image: image.NewGray(image.Rect(0, 0, 10, 10)), Text: strings.Repeat("body\n", 40)}
 	p.wrap()
 	check("")
-	p.textOnly = true
+	p.graphics = false
 	check("Advance one screen.")
 }

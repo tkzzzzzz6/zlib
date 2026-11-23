@@ -217,8 +217,10 @@ On a PDF image, hold Ctrl and roll up
 to zoom in or down to zoom out. The `+` and `-` keys also zoom.
 The title shows the scale relative to the fitted page (50% to 400%).
 Press `0` to fit the page again. While zoomed in, use up/down to pan
-vertically and Shift+left/right to pan horizontally. Press `x` to switch
-between the image and text, or Esc to return.
+vertically and Shift+left/right to pan horizontally. To copy a passage,
+drag across its words with the left mouse button, release, and press `y`
+or Ctrl+C. Ctrl+C copies only while a selection is active. Image-only
+scans need a text layer for selection. Press Esc to return from the preview.
 See [the bookshelf commands and PDF setup](usage.md#local-bookshelf).
 
 The PDF preview keeps the three most recently read pages in memory while

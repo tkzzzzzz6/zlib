@@ -38,7 +38,9 @@ again to discover files added by other programs, refresh metadata and mark
 missing files. A directory-confined MCP server only writes inside its allowed
 directory; scan its download folder from the CLI to update your bookshelf.
 
-`preview` shows a local PDF page or an EPUB chapter. Roll the wheel down
+`preview` shows a local PDF page or an EPUB text chapter. For FB2, DOCX,
+MOBI, AZW and AZW3 books, press `o` on the bookshelf to open the system
+reader. In a preview, roll the wheel down
 to read the next page or chapter and up to go back. Left/right do the same.
 Press Space to read a screen of text at a time and continue into the next
 chapter or page. On a PDF image, Space advances to the next page. Press
@@ -50,8 +52,12 @@ binary. For PDF previews, install [Poppler](https://poppler.freedesktop.org/)
 and make `pdfinfo` and `pdftotext` available on PATH. Add `pdftoppm` for
 page images in terminals with Kitty graphics or Sixel. Hold Ctrl and roll
 the wheel to zoom a PDF image, or press `+` and `-`. Press `0` to fit it
-again. For scanned pages without selectable text, use image mode or press
-`o` to open a desktop reader.
+again. Drag the left mouse button across words on the image, then press
+`y` or Ctrl+C to copy the selection. This uses the PDF's embedded text
+layer. Image-only scans can be viewed or opened with `o` in a desktop
+reader. Terminals without graphics show the extracted text automatically.
+On Linux, copying to the desktop clipboard uses `wl-clipboard` on Wayland
+or `xclip` or `xsel` on X11.
 
 ## Search
 

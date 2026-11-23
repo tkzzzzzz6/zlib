@@ -18,6 +18,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/sixel"
+	"github.com/heartleo/zlib/internal/preview"
 	zlib "github.com/heartleo/zlib/internal/zlib"
 )
 
@@ -93,13 +94,17 @@ func (c coverCapabilities) protocol() string {
 }
 
 type coverSource struct {
-	url           string
-	img           image.Image
-	width, height int
-	area          image.Rectangle
-	documentPage  bool // the whole preview body, including in narrow terminals
-	zoomPercent   int  // relative to a fitted PDF page; zero is the initial fit
-	panX, panY    int  // -100 and 100 select opposite edges of a zoomed page
+	url                        string
+	img                        image.Image
+	width, height              int
+	area                       image.Rectangle
+	documentPage               bool // the whole preview body, including in narrow terminals
+	zoomPercent                int  // relative to a fitted PDF page; zero is the initial fit
+	panX, panY                 int  // -100 and 100 select opposite edges of a zoomed page
+	words                      []preview.Word
+	selectedFirst, selectedEnd int // half-open range in reading order
+	selecting                  bool
+	selectionAnchor            int
 }
 
 func (s coverSource) bounds() image.Rectangle {
@@ -115,7 +120,8 @@ type coverFrame struct {
 	x, y, cols, rows        int
 	pixelWidth, pixelHeight int
 	cellWidth, cellHeight   int
-	id                      int // the Kitty image id
+	id                      int               // the Kitty image id
+	wordRects               []image.Rectangle // viewport pixels in reading order
 	// more are further images drawn with this one, such as the second cover
 	// of a comparison. They are erased and redrawn together.
 	more []*coverFrame
@@ -135,8 +141,9 @@ type coverEncodedMsg struct {
 }
 
 type coverRenderKey struct {
-	layout                  string // sources, placement, protocol and cell size
-	zoomPercent, panX, panY int    // viewport within the same PDF page
+	layout                     string // sources, placement, protocol and cell size
+	zoomPercent, panX, panY    int    // viewport within the same PDF page
+	selectedFirst, selectedEnd int
 }
 
 // Keep a few completed views of the current PDF page for wheel reversals and
@@ -147,7 +154,12 @@ type pageViewportCache [4]struct {
 }
 
 func (c *pageViewportCache) remember(key coverRenderKey, frame *coverFrame) {
-	if frame == nil || frame.pageKey == "" || len(frame.data) > 2<<20 {
+	// A drag can produce many intermediate selections. Keep the clean
+	// viewport handy so clearing the highlight needs no new encoding.
+	if frame == nil || frame.pageKey == "" || key.selectedEnd > key.selectedFirst {
+		return
+	}
+	if len(frame.data)+len(frame.wordRects)*4*(strconv.IntSize/8) > 2<<20 {
 		return
 	}
 	copy(c[1:], c[:len(c)-1])
@@ -174,6 +186,8 @@ type coverGraphicsModel struct {
 	frame             *coverFrame
 	viewports         pageViewportCache
 	encoding          bool
+	encodingKey       coverRenderKey
+	encodingAnchor    int
 	supported         bool
 	encodedGeneration uint64
 }
@@ -270,6 +284,7 @@ func (m *coverGraphicsModel) sourceKey() coverRenderKey {
 		fmt.Fprintf(&layout, "%s/%d/%d/%d/%d/%s/%v|", s.url, s.width, s.height, w, h, m.caps.protocol(), s.bounds())
 		if s.documentPage {
 			key.zoomPercent, key.panX, key.panY = s.zoomPercent, s.panX, s.panY
+			key.selectedFirst, key.selectedEnd = s.selectedFirst, s.selectedEnd
 		}
 	}
 	key.layout = layout.String()
@@ -299,6 +314,14 @@ func (m *coverGraphicsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.encodedGeneration = event.generation
 			m.frame = event.frame
 			m.viewports.remember(m.key, event.frame)
+			if event.frame == nil && m.source().documentPage {
+				m.inner, cmd = m.inner.Update(previewImageFailedMsg{})
+			}
+			wake = tea.Raw(coverWake)
+		} else if event.frame != nil && m.continuingDrag() {
+			// A long drag can move faster than an encoder. Show completed
+			// progress on this gesture while starting its newest range below.
+			m.frame = event.frame
 			wake = tea.Raw(coverWake)
 		}
 	default:
@@ -308,7 +331,7 @@ func (m *coverGraphicsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.caps.pixelWidth, m.caps.pixelHeight = 0, 0
 			query = tea.Raw("\x1b[16t\x1b[14t" + iTermCellSizeQuery)
 		}
-		m.inner, cmd = m.inner.Update(msg)
+		m.inner, cmd = m.inner.Update(m.imagePointer(msg))
 	}
 	// Tell the pages whether covers exist at all. They stay hidden until a
 	// protocol and pixel metrics are confirmed; on a change, replay the window
@@ -344,10 +367,21 @@ func (m *coverGraphicsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key.layout != "" && !m.encoding && m.encodedGeneration != m.generation {
 		m.encoding = true
 		srcs, c, generation := m.sources(), m.caps, m.generation
+		m.encodingKey, m.encodingAnchor = key, srcs[0].selectionAnchor
 		encode := func() tea.Msg { return coverEncodedMsg{generation, encodeCoverFrames(srcs, c)} }
 		return m, tea.Batch(cmd, query, wake, encode)
 	}
 	return m, tea.Batch(cmd, query, wake)
+}
+
+func (m *coverGraphicsModel) continuingDrag() bool {
+	pending := m.encodingKey
+	if pending.selectedFirst >= pending.selectedEnd {
+		return false
+	}
+	s := m.source()
+	pending.selectedFirst, pending.selectedEnd = m.key.selectedFirst, m.key.selectedEnd
+	return s.selecting && m.encodingAnchor == s.selectionAnchor && pending == m.key
 }
 
 func (m *coverGraphicsModel) View() tea.View {
@@ -435,8 +469,12 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 		return nil
 	}
 	img := s.img
+	var wordRects []image.Rectangle
 	if s.documentPage {
-		img, w, h = s.pageViewport(w, h, maxW, maxH)
+		view := s.pageViewport(w, h, maxW, maxH)
+		img, w, h = view.raster(img), view.size.X, view.size.Y
+		wordRects = view.wordRectangles(s.words)
+		img = view.highlight(img, wordRects, s.selectedFirst, s.selectedEnd)
 	}
 	if w != img.Bounds().Dx() || h != img.Bounds().Dy() {
 		img = resizeCover(img, w, h)
@@ -445,6 +483,7 @@ func encodeCoverFrameID(s coverSource, c coverCapabilities, id int) *coverFrame 
 	f := &coverFrame{protocol: c.protocol(), x: area.Min.X + (area.Dx()-cols)/2, y: area.Min.Y + (area.Dy()-rows)/2, cols: cols, rows: rows, id: id}
 	f.pixelWidth, f.pixelHeight = w, h
 	if s.documentPage {
+		f.wordRects = wordRects
 		f.pageKey = s.url
 		f.cellWidth, f.cellHeight = cw, ch
 		if f.protocol == "Kitty" {
