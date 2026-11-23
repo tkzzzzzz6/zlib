@@ -632,6 +632,15 @@ func TestShellSignedOutHomeOpensLogin(t *testing.T) {
 	if strings.Contains(view, "/search") || strings.Contains(view, "/favorites") {
 		t.Fatal("signed-out home shows account commands before login")
 	}
+	for _, size := range [][2]int{{80, 24}, {40, 16}, {32, 13}, {24, 10}} {
+		m, _ = shellStep(m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		view := ansi.Strip(m.View().Content)
+		for _, command := range []string{"/library", "/preview"} {
+			if !strings.Contains(view, command) {
+				t.Errorf("%dx%d: signed-out home omits %s", size[0], size[1], command)
+			}
+		}
+	}
 	m, _ = shellStep(m, tea.WindowSizeMsg{Width: 20, Height: 5})
 	if !strings.Contains(ansi.Strip(m.View().Content), "Log in") {
 		t.Fatal("small signed-out home hides its sign-in action")
@@ -814,7 +823,7 @@ func TestShellCommandsStayInPalette(t *testing.T) {
 	m, _ = shellStep(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.signedIn = true
 	home := ansi.Strip(m.View().Content)
-	for _, command := range []string{"/search", "/favorites", "/recommended", "/history", "/config", "/kindle"} {
+	for _, command := range []string{"/search", "/favorites", "/library", "/preview", "/recommended", "/history", "/config", "/kindle"} {
 		if !strings.Contains(home, command) {
 			t.Fatalf("home omits %s", command)
 		}
@@ -832,6 +841,11 @@ func TestShellCommandsStayInPalette(t *testing.T) {
 	}
 	if rows := m.paletteVisibleRows(m.height); rows != 5 {
 		t.Fatalf("palette has %d visible rows, want 5", rows)
+	}
+	for _, command := range []string{"/library", "/preview"} {
+		if !strings.Contains(palette, command) {
+			t.Errorf("first command dialog screen omits %s", command)
+		}
 	}
 	if !strings.Contains(palette, "> /search") || !strings.Contains(palette, "\n       │   Search books with filters") {
 		t.Fatal("wide command dialog should show descriptions below command names")
@@ -862,6 +876,7 @@ func TestShellHomeLogoAndShortcutsResponsive(t *testing.T) {
 	}{
 		{80, 24, true, 2},
 		{40, 16, true, 1},
+		{32, 13, true, 1},
 		{24, 12, false, 1},
 	} {
 		m := newShellModel()
@@ -873,6 +888,9 @@ func TestShellHomeLogoAndShortcutsResponsive(t *testing.T) {
 		}
 		if !strings.Contains(view, "/search") || !strings.Contains(view, "/favorites") {
 			t.Fatalf("%dx%d: primary commands are missing", tc.width, tc.height)
+		}
+		if !strings.Contains(view, "/library") || !strings.Contains(view, "/preview") {
+			t.Errorf("%dx%d: local reading commands are missing", tc.width, tc.height)
 		}
 		if tc.large && !strings.Contains(view, "█████") {
 			t.Fatalf("%dx%d: large wordmark is missing", tc.width, tc.height)

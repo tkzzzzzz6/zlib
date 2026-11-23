@@ -3,6 +3,7 @@ package cli
 import (
 	"image/color"
 	"math"
+	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -19,11 +20,18 @@ var homeLetterforms = [4][5]string{
 
 type homeShortcut struct{ name, label string }
 
-var signedInShortcuts = []homeShortcut{
-	{"search", "Search books"}, {"favorites", "Saved books"},
-	{"recommended", "Recommended"}, {"history", "Download history"},
-	{"config", "Settings"}, {"kindle", "Send to Kindle"},
+var localShortcuts = []homeShortcut{
+	{"library", "Local bookshelf"}, {"preview", "Open PDF or EPUB"},
 }
+
+var signedInShortcuts = slices.Concat(
+	[]homeShortcut{{"search", "Search books"}, {"favorites", "Saved books"}},
+	localShortcuts,
+	[]homeShortcut{
+		{"recommended", "Recommended"}, {"history", "Download history"},
+		{"config", "Settings"}, {"kindle", "Send to Kindle"},
+	},
+)
 
 func homeLogo(width, height int) []string {
 	if width < 32 || height < 12 {
@@ -117,7 +125,10 @@ func homeShortcutCell(shortcut homeShortcut, width int) string {
 }
 
 func (m shellModel) homeShortcutRows() []string {
-	shortcuts := signedInShortcuts
+	shortcuts := localShortcuts
+	if m.signedIn {
+		shortcuts = signedInShortcuts
+	}
 	if m.width >= 76 {
 		rows := make([]string, 0, len(shortcuts)/2)
 		for i := 0; i < len(shortcuts); i += 2 {
@@ -164,13 +175,17 @@ func (m shellModel) homeView(available int) string {
 		if len(rows) < available {
 			rows = append(rows, lipgloss.NewStyle().Foreground(currentTheme.Muted).Render("Email and password"))
 		}
-	} else if !strings.HasPrefix(m.input.Value(), "/") && available-len(rows) >= 4 {
+	}
+	if !strings.HasPrefix(m.input.Value(), "/") {
 		shortcuts := m.homeShortcutRows()
 		gap := 1
 		if available >= 16 {
 			gap = 2
 		}
-		room := max(0, available-len(rows)-gap-1)
+		if !m.signedIn {
+			gap = min(gap, max(0, available-len(rows)-len(shortcuts)))
+		}
+		room := available - len(rows) - gap
 		if room > 0 {
 			for range gap {
 				rows = append(rows, "")

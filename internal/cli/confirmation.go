@@ -28,8 +28,11 @@ func confirmationDialog(background string, width, height int, title, name, id, n
 	lines = append(lines, "",
 		lipgloss.JoinHorizontal(lipgloss.Top, renderActionButton("Cancel", !focused, false), base.Render("  "), renderActionButton(action, focused, danger)),
 		"", "←/→ select · Enter · Esc")
-	content := strings.Join(lines, "\n")
-	dialog := base.Width(inner).Padding(1, 1).Border(lipgloss.RoundedBorder()).BorderForeground(currentTheme.Accent).Render(content)
+	return confirmationPanel(background, width, height, inner, base, lines)
+}
+
+func confirmationPanel(background string, width, height, inner int, base lipgloss.Style, lines []string) string {
+	dialog := base.Width(inner).Padding(1, 1).Border(lipgloss.RoundedBorder()).BorderForeground(currentTheme.Accent).Render(strings.Join(lines, "\n"))
 	x, y := max(0, (width-lipgloss.Width(dialog))/2), max(0, (height-lipgloss.Height(dialog))/2)
 	dim := lipgloss.NewStyle().Foreground(currentTheme.Muted).Render(ansi.Strip(background))
 	return fullScreenView(width, height, lipgloss.NewCompositor(lipgloss.NewLayer(dim), lipgloss.NewLayer(dialog).X(x).Y(y)).Render()).Content

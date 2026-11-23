@@ -104,10 +104,10 @@ var shellCommands = []shellCommand{
 	{"search", "Search books with filters"},
 	{"favorites", "Show favorite books"},
 	{"recommended", "Show recommended books"},
-	{"most-popular", "Show most popular books"},
-	{"history", "Show download history"},
 	{"library", "Browse and manage local books"},
 	{"preview", "Preview a local PDF or EPUB"},
+	{"most-popular", "Show most popular books"},
+	{"history", "Show download history"},
 	{"profile", "Show account profile and download quota"},
 	{"config", "View or edit network, download, search, Kindle, WeRead and metadata settings"},
 	{"theme", "Choose a color theme"},
@@ -683,8 +683,7 @@ func (m *shellModel) dispatch(value string) tea.Cmd {
 		return m.open("library", newLibraryPage(path))
 	case "preview":
 		if arg == "" {
-			target := sendTarget{title: "Preview book", confirmTitle: "Preview this file?", action: "Preview", allowed: []string{".pdf", ".epub"}}
-			return m.open("preview-file", newSendFileModel(filePickerStartDir(), target))
+			return m.open("preview-file", newSendFileModel(filePickerStartDir(), previewFileTarget))
 		}
 		return m.open("preview", newPreviewPage(strings.Trim(arg, "\"")))
 	}

@@ -22,20 +22,21 @@ columns or wider, command hints use two columns; smaller terminals use one.
 The hints show commands to type in the input; typing `/` opens the selectable
 command menu. Without a saved session, `zlib tui` opens the email and password
 form immediately. Press Esc to reach the signed-out start screen, where Enter
-reopens login and `/` gives access to settings and domain checks. That screen
-shows a heading, a focused Log in button rendered by `renderActionButton`, and
-the sign-in method; it adds no other explanatory text. Command hints on the
-signed-in screen use muted descriptions, matching the command dialog. A successful
-login returns to the start screen. If you tried a protected command first, its
-draft stays in the input so
-you can press Enter to continue. Login errors stay on the form for another try.
+reopens login and `/` gives access to settings and domain checks. The heading,
+focused Log in button, and sign-in method appear above the offline commands
+when space permits. On either start screen, `/library` opens the local bookshelf
+and `/preview` opens a PDF or EPUB. Command hints use muted descriptions,
+matching the command dialog. A successful login returns to the start screen.
+If you tried a protected command first, its draft stays in the input so you
+can press Enter to continue. Login errors stay on the form for another try.
 The TUI login form accepts email and password. To import a Cookie file, use
 `zlib login --cookies <file> --domain <domain>` outside the TUI.
 `/logout` asks for confirmation, clears the saved session and account pages, then
 opens the login form. If session removal fails, the current screen shows an error.
 
 Typing `/` opens a centered command dialog over the current page. It keeps the
-page and its selection in place. At 80×24, the dialog shows five commands,
+page and its selection in place. At 80×24, the dialog initially shows
+`/search`, `/favorites`, `/recommended`, `/library`, and `/preview`,
 each with its description below the name. Narrow terminals show one line per
 command. ↑/↓ cycles through matches,
 including from last to first; the list scrolls when selection leaves its visible
@@ -198,6 +199,11 @@ Open `/library` to manage local files offline. Press `a` to add a book,
 reading status, `t` edits tags, and `d` asks whether to remove the entry.
 Press Enter to preview a PDF or EPUB, or `o` to open the book in its system
 reader. The saved-file screen also offers Preview for PDF and EPUB downloads.
+
+Run `/preview` to pick a PDF or EPUB from the downloads directory. After
+choosing a file, use the arrow keys to select Preview, Open with default app,
+or Cancel, in that order. Enter activates the selected action. Esc closes
+the choices and returns to the same file in the picker.
 
 In a preview, roll the wheel down for the next PDF page or EPUB chapter, or
 up for the previous one. Left/right also turn pages or chapters. In text

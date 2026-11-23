@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,5 +109,75 @@ func TestWeReadFilePickerEmptyFolderSaysWhy(t *testing.T) {
 	m = fileModelStep(t, m, key("enter"))
 	if m.confirm {
 		t.Fatal("Enter in an empty folder opened a confirmation")
+	}
+}
+
+func TestShellPreviewFilePickerActions(t *testing.T) {
+	dir := bookDir(t, "a.pdf", "b.epub")
+	t.Setenv(downloadDirEnvVar, dir)
+	for _, size := range [][2]int{{80, 24}, {40, 16}, {24, 10}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			m := newShellModel()
+			m, _ = shellStep(m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			cmd := m.dispatch("/preview")
+			m, _ = shellStep(m, cmd())
+			m, _ = shellStep(m, key("down"))
+			m, _ = shellStep(m, key("enter"))
+			screen := ansi.Strip(m.View().Content)
+			open := strings.Index(screen, "Open with default app")
+			if preview, cancel := strings.Index(screen, "Preview"), strings.LastIndex(screen, "Cancel"); preview < 0 || open <= preview || cancel <= open {
+				t.Fatalf("preview choices are missing or out of order:\n%s", screen)
+			}
+			for _, line := range strings.Split(screen, "\n") {
+				if ansi.StringWidth(line) > size[0] {
+					t.Fatalf("preview choices overflow: %q", line)
+				}
+			}
+
+			m, _ = shellStep(m, key("left"))
+			m, cmd = shellStep(m, key("enter"))
+			if picker := m.page.(sendFileModel); cmd != nil || picker.confirm || picker.files.cursor != 1 {
+				t.Fatal("Cancel should dismiss the choices and retain the file")
+			}
+
+			m, _ = shellStep(m, key("enter"))
+			m, _ = shellStep(m, key("right"))
+			m, cmd = shellStep(m, key("enter"))
+			if cmd == nil {
+				t.Fatal("Open with default app did not request a launch")
+			}
+			// The fixture is not a valid EPUB. The normal launcher rejects it
+			// before invoking the system app, keeping this test offline.
+			event := cmd().(shellEvent)
+			if result, ok := event.msg.(previewFileOpenedMsg); !ok || result.result.err == nil {
+				t.Fatalf("expected a failed open, got %#v", event.msg)
+			}
+			m, _ = shellStep(m, event)
+			if picker := m.page.(sendFileModel); picker.confirm || picker.files.cursor != 1 || !strings.Contains(picker.message, "could not recognize this file") {
+				t.Fatalf("failed open did not return to the selected file: %q", picker.message)
+			}
+
+			m, _ = shellStep(m, key("enter"))
+			m, cmd = shellStep(m, key("esc"))
+			if cmd != nil || m.page.(sendFileModel).confirm {
+				t.Fatal("Esc should close the choices without opening anything")
+			}
+			m, _ = shellStep(m, key("enter"))
+			m, cmd = shellStep(m, key("enter"))
+			m, _ = shellStep(m, cmd())
+			if page, ok := m.page.(previewPageModel); !ok || page.path != filepath.Join(dir, "b.epub") {
+				t.Fatal("default action did not enter the preview for the selected file")
+			}
+		})
+	}
+}
+
+func TestPreviewPickerIgnoresOlderOpenResult(t *testing.T) {
+	m := newSendFileModel("", previewFileTarget)
+	m.openRequest = 2
+	m = fileModelStep(t, m, previewFileOpenedMsg{2, libraryOpenedMsg{}})
+	m = fileModelStep(t, m, previewFileOpenedMsg{1, libraryOpenedMsg{fmt.Errorf("older failure")}})
+	if m.message != (libraryOpenedMsg{}).message() {
+		t.Fatalf("an older open result replaced the latest status: %s", m.message)
 	}
 }
